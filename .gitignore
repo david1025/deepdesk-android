@@ -1,0 +1,34 @@
+# Gradle
+.gradle/
+.kotlin/
+.workbuddy/
+build/
+**/build/
+
+# IDE
+.idea/
+*.iml
+.DS_Store
+captures/
+
+# Android
+local.properties
+*.jks
+/keystore/
+*.keystore
+*.p12
+*.pfx
+
+# 构建输出
+app/build/
+output/
+
+# 用户提供的官方 APK，仅本地解码图标，不得入库
+deepseek.apk
+
+# Room schema 导出保留（core/database/schemas 入库）
+
+# Local attachments and IDE clippings
+*.textClipping
+.env
+.env.*
