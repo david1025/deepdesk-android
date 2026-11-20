@@ -113,3 +113,8 @@ sdk.dir=/path/to/Android/sdk
 - 本工程代码：随仓库分发（内部项目）。
 - 参考实现的交互与协议语义来自 deepseek-ai/chat-demo（MIT）——未复制其源码；许可与版权声明见 [LICENSES/README.md](LICENSES/README.md)。
 - 依赖许可清单：AndroidX/Apache-2.0、OkHttp/Apache-2.0、kotlinx/Apache-2.0、mikepenz markdown renderer/Apache-2.0、Coil/Apache-2.0。
+
+## 跨端同步契约
+
+桌面仓库维护三端共享的 [Sync v1 草案](https://github.com/david1025/deepdesk/blob/17e77887463d4e72a95d655026d7ece8fae0811d/contracts/sync-v1.schema.json)。
+Android 实现同步时以该固定提交为起点，并与 Windows 和 macOS 使用同一版本的契约及脱敏测试样本联测。当前三端互通待实现和验收。
