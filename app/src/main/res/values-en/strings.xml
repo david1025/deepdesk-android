@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">DeepSeek Chat (3rd-party)</string>
+    <string name="nav_drawer_history">History</string>
+    <string name="new_chat">New chat</string>
+    <string name="settings">Settings</string>
+    <string name="send">Send</string>
+    <string name="stop_generate">Stop</string>
+    <string name="voice_input">Voice input</string>
+    <string name="add_attachment">Add attachment</string>
+    <string name="thinking_toggle">Thinking</string>
+    <string name="web_search_toggle">Search</string>
+    <string name="recording_hint">Tap Done to transcribe; the text is filled into the input box for editing before sending</string>
+</resources>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 默认语言：简体中文；英文见 values-en -->
+<resources>
+    <string name="app_name">DeepSeek Chat（第三方客户端）</string>
+    <string name="nav_drawer_history">历史记录</string>
+    <string name="new_chat">新建对话</string>
+    <string name="settings">设置</string>
+    <string name="send">发送</string>
+    <string name="stop_generate">停止生成</string>
+    <string name="voice_input">语音输入</string>
+    <string name="add_attachment">添加附件</string>
+    <string name="thinking_toggle">深度思考</string>
+    <string name="web_search_toggle">智能搜索</string>
+    <string name="recording_hint">点击“完成”后进行语音识别；识别结果回填输入框，可编辑后发送</string>
+</resources>
