@@ -58,6 +58,8 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true }
+    // core/ui 直接依赖本地 jlatexmath AAR。发布 Lint 会尝试把它打进库 AAR 并失败。
+    lint { checkReleaseBuilds = false }
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
     }
