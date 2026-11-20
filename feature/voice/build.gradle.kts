@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dsh.deepseek.feature.voice"
+    namespace = "com.david.deepdesk.feature.voice"
     compileSdk = 35
     defaultConfig { minSdk = 26 }
     compileOptions {

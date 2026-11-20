@@ -167,6 +167,9 @@
     <string name="browsed_results">已浏览搜索结果</string>
     <string name="search_conversations">搜索对话内容...</string>
     <string name="no_matching_chats">无匹配对话</string>
+    <string name="no_chats_yet">暂无对话</string>
+    <string name="no_chats_hint">你与 DeepSeek 的对话\n将展示在这里</string>
+    <string name="start_new_chat">开启新对话</string>
     <string name="select_chats">选择对话</string>
     <string name="selected_chats">已选择 %1$d 个对话</string>
     <string name="cancel_multiselect">取消多选</string>

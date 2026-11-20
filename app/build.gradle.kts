@@ -13,11 +13,11 @@ val keystoreProps = Properties().apply {
 }
 
 android {
-    namespace = "com.dsh.deepseek"
+    namespace = "com.david.deepdesk"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.dsh.deepseek"
+        applicationId = "com.david.deepdesk"
         minSdk = 26
         targetSdk = 35
         versionCode = 1

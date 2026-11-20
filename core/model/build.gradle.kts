@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dsh.deepseek.core.model"
+    namespace = "com.david.deepdesk.core.model"
     compileSdk = 35
     defaultConfig { minSdk = 26 }
     compileOptions {

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dsh.deepseek.core.datastore"
+    namespace = "com.david.deepdesk.core.datastore"
     compileSdk = 35
     defaultConfig { minSdk = 26 }
     compileOptions {

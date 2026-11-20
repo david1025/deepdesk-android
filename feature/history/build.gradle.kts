@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dsh.deepseek.feature.history"
+    namespace = "com.david.deepdesk.feature.history"
     compileSdk = 35
     defaultConfig { minSdk = 26 }
     compileOptions {

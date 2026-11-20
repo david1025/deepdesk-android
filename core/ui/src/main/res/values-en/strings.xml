@@ -167,6 +167,9 @@
     <string name="browsed_results">Pages browsed</string>
     <string name="search_conversations">Search chats…</string>
     <string name="no_matching_chats">No matching chats</string>
+    <string name="no_chats_yet">No chats yet</string>
+    <string name="no_chats_hint">Your conversations with DeepSeek\nwill appear here</string>
+    <string name="start_new_chat">Start a new chat</string>
     <string name="select_chats">Select chats</string>
     <string name="selected_chats">%1$d selected</string>
     <string name="cancel_multiselect">Cancel</string>

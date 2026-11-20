@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.dsh.deepseek.core.network"
+    namespace = "com.david.deepdesk.core.network"
     compileSdk = 35
     defaultConfig { minSdk = 26 }
     compileOptions {
