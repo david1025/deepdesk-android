@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -27,11 +26,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.annotation.DrawableRes
 import com.dsh.deepseek.core.ui.DeepSeekColors
+import com.dsh.deepseek.core.ui.DsConfirmDialog
 import com.dsh.deepseek.core.ui.DsIcon
 import com.dsh.deepseek.core.ui.LocalDeepSeekDark
 import com.dsh.deepseek.core.ui.R as UiR
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -50,19 +49,28 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpOffset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import com.dsh.deepseek.core.database.ConversationSummaryRow
 
 /**
  * 左侧抽屉：对齐官方 App（搜索 / 日期分组 / 多选）。
- * 底栏不登录，不放头像和「本地用户」。余额做成小号胶囊，点开用量统计，三个点进设置。导入导出只放在设置里。
+ * 底栏不登录，不放头像和「本地用户」。余额做成小号胶囊，点开用量统计，齿轮进设置。导入导出只放在设置里。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -347,9 +355,10 @@ fun SessionsDrawer(
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = onOpenSettings) {
                     DsIcon(
-                        UiR.drawable.ic_ellipsis_outline,
+                        UiR.drawable.ic_settings_outline_24,
                         contentDescription = stringResource(UiR.string.settings),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(22.dp),
                     )
                 }
             }
@@ -379,42 +388,45 @@ fun SessionsDrawer(
     }
 
     deleteFor?.let { conv ->
-        AlertDialog(
-            onDismissRequest = { deleteFor = null },
-            title = { Text(stringResource(UiR.string.delete_chat)) },
-            text = {
-                Text(
-                    stringResource(
-                        UiR.string.delete_chat_message,
-                        conv.title.ifBlank { stringResource(UiR.string.new_chat) },
-                    ),
-                )
+        DeleteChatsDialog(
+            title = stringResource(UiR.string.delete_chat_question),
+            onConfirm = {
+                historyViewModel.delete(conv.id)
+                deleteFor = null
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    historyViewModel.delete(conv.id)
-                    deleteFor = null
-                }) { Text(stringResource(UiR.string.delete), color = DeepSeekColors.Danger) }
-            },
-            dismissButton = { TextButton(onClick = { deleteFor = null }) { Text(stringResource(UiR.string.cancel)) } },
+            onDismiss = { deleteFor = null },
         )
     }
 
     if (bulkDelete) {
-        AlertDialog(
-            onDismissRequest = { bulkDelete = false },
-            title = { Text(stringResource(UiR.string.delete_chat)) },
-            text = { Text(stringResource(UiR.string.delete_selected_chats, selectedIds.size)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    historyViewModel.deleteMany(selectedIds)
-                    bulkDelete = false
-                    exitSelect()
-                }) { Text(stringResource(UiR.string.delete), color = DeepSeekColors.Danger) }
+        DeleteChatsDialog(
+            title = stringResource(UiR.string.delete_selected_chats, selectedIds.size),
+            onConfirm = {
+                historyViewModel.deleteMany(selectedIds)
+                bulkDelete = false
+                exitSelect()
             },
-            dismissButton = { TextButton(onClick = { bulkDelete = false }) { Text(stringResource(UiR.string.cancel)) } },
+            onDismiss = { bulkDelete = false },
         )
     }
+}
+
+/** 官方删除确认：标题和说明居中，红色胶囊按钮，下面是文字「取消」。 */
+@Composable
+private fun DeleteChatsDialog(
+    title: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    DsConfirmDialog(
+        title = title,
+        message = stringResource(UiR.string.delete_chat_irreversible),
+        confirmLabel = stringResource(UiR.string.delete),
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+        destructive = true,
+        dismissLabel = stringResource(UiR.string.cancel),
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -434,19 +446,31 @@ private fun ConversationRow(
     onMultiSelect: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    val highlight = active || menuOpen
-    val titleColor = if (highlight) DeepSeekColors.BrandBlue else MaterialTheme.colorScheme.onSurface
+    val dark = LocalDeepSeekDark.current
+    val showMenuButton = !selecting && (active || menuOpen)
+    val titleColor = when {
+        active && dark -> DeepSeekColors.SessionTitleDark
+        active -> DeepSeekColors.BrandBlue
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val rowBg = when {
+        menuOpen -> if (dark) DeepSeekColors.SessionPressedDark else DeepSeekColors.SessionPressedLight
+        active -> if (dark) DeepSeekColors.SessionSelectedDark else DeepSeekColors.SessionSelectedLight
+        else -> Color.Transparent
+    }
+    val shape = RoundedCornerShape(14.dp)
+    val density = LocalDensity.current
+    val menuPosition = remember(density) { SessionMenuPositionProvider(density) }
     Box(Modifier.fillMaxWidth()) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
+                .padding(vertical = 2.dp)
+                .clip(shape)
                 .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                .background(
-                    if (highlight) DeepSeekColors.BrandBlue.copy(alpha = 0.16f) else Color.Transparent,
-                    RoundedCornerShape(14.dp),
-                )
-                .padding(start = 12.dp, end = if (selecting) 12.dp else 4.dp, top = 2.dp, bottom = 2.dp),
+                .background(rowBg)
+                .padding(start = 12.dp, end = if (showMenuButton) 4.dp else 12.dp),
         ) {
             if (selecting) {
                 SelectDot(selected = checked)
@@ -460,9 +484,9 @@ private fun ConversationRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .weight(1f)
-                    .padding(vertical = 12.dp),
+                    .padding(vertical = 11.dp),
             )
-            if (!selecting) {
+            if (showMenuButton) {
                 CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
                     Box(
                         contentAlignment = Alignment.Center,
@@ -473,23 +497,76 @@ private fun ConversationRow(
                         DsIcon(
                             UiR.drawable.ic_ellipsis_outline,
                             contentDescription = stringResource(UiR.string.more),
-                            tint = if (highlight) DeepSeekColors.BrandBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+                            tint = if (dark) DeepSeekColors.SessionDotsDark else DeepSeekColors.SessionDotsLight,
                             modifier = Modifier.size(20.dp),
                         )
                     }
                 }
             }
         }
-        DropdownMenu(
-            expanded = menuOpen,
-            onDismissRequest = onDismissMenu,
-            offset = DpOffset(x = 36.dp, y = (-4).dp),
-            shape = RoundedCornerShape(14.dp),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            tonalElevation = 0.dp,
-            shadowElevation = 8.dp,
-            modifier = Modifier.widthIn(min = 156.dp),
-        ) {
+        if (menuOpen) {
+            Popup(
+                popupPositionProvider = menuPosition,
+                onDismissRequest = onDismissMenu,
+                properties = PopupProperties(focusable = true),
+            ) {
+                SessionActionMenu(
+                    pinned = conv.pinned,
+                    onRename = onRename,
+                    onPin = onPin,
+                    onMultiSelect = onMultiSelect,
+                    onDelete = onDelete,
+                )
+            }
+        }
+    }
+}
+
+/** 右缘贴着会话行。下方放得下就在下面，否则翻到上面。 */
+private class SessionMenuPositionProvider(
+    private val density: Density,
+) : PopupPositionProvider {
+    override fun calculatePosition(
+        anchorBounds: IntRect,
+        windowSize: IntSize,
+        layoutDirection: LayoutDirection,
+        popupContentSize: IntSize,
+    ): IntOffset {
+        val gap = with(density) { 8.dp.roundToPx() }
+        val margin = with(density) { 8.dp.roundToPx() }
+        val rawX = if (layoutDirection == LayoutDirection.Ltr) {
+            anchorBounds.right - popupContentSize.width
+        } else {
+            anchorBounds.left
+        }
+        val maxX = (windowSize.width - popupContentSize.width - margin).coerceAtLeast(margin)
+        val x = rawX.coerceIn(margin, maxX)
+        val below = anchorBounds.bottom + gap
+        val above = anchorBounds.top - popupContentSize.height - gap
+        val fitsBelow = below + popupContentSize.height <= windowSize.height - margin
+        val y = if (fitsBelow) below else above
+        val maxY = (windowSize.height - popupContentSize.height - margin).coerceAtLeast(margin)
+        return IntOffset(x, y.coerceIn(margin, maxY))
+    }
+}
+
+@Composable
+private fun SessionActionMenu(
+    pinned: Boolean,
+    onRename: () -> Unit,
+    onPin: () -> Unit,
+    onMultiSelect: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val dark = LocalDeepSeekDark.current
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = if (dark) Color(0xFF3C3C3C) else Color.White,
+        tonalElevation = 0.dp,
+        shadowElevation = 12.dp,
+        modifier = Modifier.width(208.dp),
+    ) {
+        Column {
             SessionMenuItem(
                 icon = UiR.drawable.ic_edit_outline_20,
                 label = stringResource(UiR.string.rename_chat),
@@ -497,8 +574,8 @@ private fun ConversationRow(
             )
             SessionMenuDivider()
             SessionMenuItem(
-                icon = if (conv.pinned) UiR.drawable.ic_unpin_outline_20 else UiR.drawable.ic_pin_outline_20,
-                label = if (conv.pinned) stringResource(UiR.string.unpin) else stringResource(UiR.string.pin),
+                icon = if (pinned) UiR.drawable.ic_unpin_outline_20 else UiR.drawable.ic_pin_outline_20,
+                label = if (pinned) stringResource(UiR.string.unpin) else stringResource(UiR.string.pin),
                 onClick = onPin,
             )
             SessionMenuDivider()
@@ -533,7 +610,7 @@ private fun SessionMenuItem(
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        DsIcon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+        DsIcon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(12.dp))
         Text(label, style = MaterialTheme.typography.bodyLarge, color = color)
     }
@@ -543,7 +620,7 @@ private fun SessionMenuItem(
 private fun SessionMenuDivider() {
     HorizontalDivider(
         thickness = 0.5.dp,
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        color = if (LocalDeepSeekDark.current) Color(0xFF4E4E4E) else Color(0xFFE4E4E4),
     )
 }
 

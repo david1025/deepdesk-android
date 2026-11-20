@@ -60,9 +60,25 @@ data class ApiMessage(
     }
 }
 
-/** 请求内用户消息的 file 引用块（与文本块拼成 content 数组） */
+/** 请求内用户消息的 file 引用块（文档等非图片，与文本块拼成 content 数组） */
 @Serializable
 data class FileRefBlock(
+    val type: String = "file",
+    @SerialName("file_id") val fileId: String,
+)
+
+/**
+ * Anthropic Messages 的图片块。file_id 必须放在 source 里，不能用顶层 type=file，
+ * 否则接口直接拒绝，客户端会把它显示成网络中断。
+ */
+@Serializable
+data class ImageFileBlock(
+    val type: String = "image",
+    val source: ImageFileSource,
+)
+
+@Serializable
+data class ImageFileSource(
     val type: String = "file",
     @SerialName("file_id") val fileId: String,
 )

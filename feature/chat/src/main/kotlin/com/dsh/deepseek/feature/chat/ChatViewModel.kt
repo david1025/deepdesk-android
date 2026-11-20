@@ -365,13 +365,11 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 val sessionId = ensureSessionId()
                 // 1. 上传附件（未 UPLOADED 的失败附件不入请求）
                 val uploadedIds = mutableListOf<String>()
+                val newImageIds = mutableSetOf<String>()
                 state.pendingAttachments.forEach { att ->
-                    when (att.uploadState) {
-                        UploadState.UPLOADED -> uploadedIds += att.serverFileId!!
-                        UploadState.LOCAL, UploadState.FAILED -> {
-                            val fileId = uploadAttachment(att)
-                            uploadedIds += fileId
-                        }
+                    val fileId = when (att.uploadState) {
+                        UploadState.UPLOADED -> att.serverFileId!!
+                        UploadState.LOCAL, UploadState.FAILED -> uploadAttachment(att)
                         UploadState.UPLOADING -> {
                             _ui.value = _ui.value.copy(
                                 error = AppError(AppError.Kind.LOCAL, "附件仍在上传中，请稍候")
@@ -379,6 +377,8 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                             return@launch
                         }
                     }
+                    uploadedIds += fileId
+                    if (att.isImage) newImageIds += fileId
                 }
 
                 val text = state.draftText.trim()
@@ -404,13 +404,14 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 // 3. 组装请求：活跃路径（不含刚插入的用户消息）+ 新消息内容
                 val (path, blocks) = services.repository.activePathWithBlocks(sessionId)
                 val history = path.dropLast(1)
-                val attByMsg = attachmentsByMessage(sessionId, history)
+                val refs = attachmentsByMessage(sessionId, history)
                 val request = RequestFactory.build(
                     history = history,
                     blocksByMessageId = blocks,
-                    attachmentsByMessageId = attByMsg,
+                    attachmentsByMessageId = refs.byMessage,
                     newMessageText = text,
                     newMessageFileIds = uploadedIds,
+                    imageFileIds = refs.imageFileIds + newImageIds,
                     options = RequestFactory.Options(
                         thinkingEnabled = state.thinkingEnabled,
                         webSearchEnabled = state.webSearchEnabled,
@@ -442,13 +443,20 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
         }
     }
 
-    /** 一次会话级查询得到“消息 → 已上传 file_id 列表”映射（避免逐消息查库） */
-    private suspend fun attachmentsByMessage(sessionId: String, history: List<ChatMessage>): Map<String, List<String>> {
+    private data class AttachmentRefs(
+        val byMessage: Map<String, List<String>>,
+        val imageFileIds: Set<String>,
+    )
+
+    /** 一次会话级查询得到“消息 → 已上传 file_id 列表”，并标出哪些是图片。 */
+    private suspend fun attachmentsByMessage(sessionId: String, history: List<ChatMessage>): AttachmentRefs {
         val historyIds = history.map { it.id }.toSet()
-        return services.repository.getAttachments(sessionId)
-            .asSequence()
+        val attachments = services.repository.getAttachments(sessionId)
             .filter { it.messageId != null && it.serverFileId != null && it.messageId in historyIds }
-            .groupBy({ it.messageId!! }, { it.serverFileId!! })
+        return AttachmentRefs(
+            byMessage = attachments.groupBy({ it.messageId!! }, { it.serverFileId!! }),
+            imageFileIds = attachments.filter { it.isImage }.mapNotNull { it.serverFileId }.toSet(),
+        )
     }
 
     private suspend fun uploadAttachment(att: Attachment): String {
@@ -518,7 +526,8 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             val request = RequestFactory.build(
                 history = history,
                 blocksByMessageId = blocks,
-                attachmentsByMessageId = attByMsg,
+                attachmentsByMessageId = attByMsg.byMessage,
+                imageFileIds = attByMsg.imageFileIds,
                 newMessageText = "",
                 newMessageFileIds = emptyList(),
                 options = RequestFactory.Options(
@@ -535,6 +544,62 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 request = request,
                 model = RequestFactory.MODEL,
                 thinkingEnabled = _ui.value.thinkingEnabled,
+            )
+        }
+    }
+
+    /** 手动停止后接着写同一条回复，不另开一条。 */
+    fun continueGeneration(assistantMessageId: String) {
+        val sessionId = _ui.value.sessionId ?: return
+        if (services.orchestrator.isGenerating(sessionId)) return
+        if (!services.hasApiKey()) {
+            _ui.value = _ui.value.copy(error = AppError(AppError.Kind.AUTH, str(UiR.string.need_api_key)))
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            val data = services.repository.loadSession(sessionId) ?: return@launch
+            val target = data.roots.flatMap { collectDescendants(it) }
+                .firstOrNull { it.message.id == assistantMessageId }
+                ?: data.roots.firstOrNull { it.message.id == assistantMessageId }
+                ?: return@launch
+            if (target.message.status != ReplyStatus.STOPPED) return@launch
+            val parentId = target.message.parentId
+            val (path, blocks) = services.repository.activePathWithBlocks(sessionId)
+            val history = if (parentId == null) {
+                emptyList()
+            } else {
+                val parent = path.firstOrNull { it.id == parentId } ?: return@launch
+                path.takeWhile { it.id != parentId } + parent
+            }
+            val prefix = blocks[assistantMessageId].orEmpty()
+            val prefill = prefix.filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }.trim()
+            // 已有正文时关掉思考：思考开启时，纯文本的 assistant 前缀会被接口拒绝。
+            val continueThinking = prefill.isBlank() && _ui.value.thinkingEnabled
+            val attByMsg = attachmentsByMessage(sessionId, history)
+            val request = RequestFactory.build(
+                history = history,
+                blocksByMessageId = blocks,
+                attachmentsByMessageId = attByMsg.byMessage,
+                imageFileIds = attByMsg.imageFileIds,
+                newMessageText = "",
+                newMessageFileIds = emptyList(),
+                options = RequestFactory.Options(
+                    thinkingEnabled = continueThinking,
+                    webSearchEnabled = _ui.value.webSearchEnabled,
+                    readUrlEnabled = _ui.value.webSearchEnabled,
+                    titleEnabled = false,
+                ),
+                appendUserMessage = false,
+                assistantPrefill = prefill.ifBlank { null },
+            )
+            services.orchestrator.generate(
+                sessionId = sessionId,
+                parentMessageId = parentId,
+                request = request,
+                model = RequestFactory.MODEL,
+                thinkingEnabled = continueThinking,
+                resumeMessageId = assistantMessageId,
+                prefixBlocks = prefix,
             )
         }
     }
@@ -570,7 +635,8 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             val request = RequestFactory.build(
                 history = history,
                 blocksByMessageId = blocks,
-                attachmentsByMessageId = attByMsg,
+                attachmentsByMessageId = attByMsg.byMessage,
+                imageFileIds = attByMsg.imageFileIds,
                 newMessageText = newText.trim(),
                 newMessageFileIds = emptyList(),
                 options = RequestFactory.Options(

@@ -81,6 +81,28 @@ class RequestFactoryTest {
     }
 
     @Test
+    fun `图片附件走 image source file_id`() {
+        val req = RequestFactory.build(
+            history = emptyList(),
+            blocksByMessageId = emptyMap(),
+            attachmentsByMessageId = emptyMap(),
+            newMessageText = "这是什么",
+            newMessageFileIds = listOf("file-api-img", "file-api-pdf"),
+            imageFileIds = setOf("file-api-img"),
+            options = RequestFactory.Options(false, false, false, false),
+        )
+        val arr = req.messages[0].content.jsonArray
+        assertEquals("text", arr[0].jsonObject["type"]?.jsonPrimitive?.content)
+        val image = arr[1].jsonObject
+        assertEquals("image", image["type"]?.jsonPrimitive?.content)
+        val source = image["source"]!!.jsonObject
+        assertEquals("file", source["type"]?.jsonPrimitive?.content)
+        assertEquals("file-api-img", source["file_id"]?.jsonPrimitive?.content)
+        assertEquals("file", arr[2].jsonObject["type"]?.jsonPrimitive?.content)
+        assertEquals("file-api-pdf", arr[2].jsonObject["file_id"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `工具开关生成 tools 数组`() {
         val req = RequestFactory.build(
             history = emptyList(),
@@ -120,6 +142,46 @@ class RequestFactoryTest {
             appendUserMessage = false,
         )
         assertEquals(1, req.messages.size)
+    }
+
+    @Test
+    fun `继续生成把已写出的正文作为 assistant 前缀`() {
+        val history = listOf(userMsg("m1", "讲个故事"))
+        val req = RequestFactory.build(
+            history = history,
+            blocksByMessageId = mapOf("m1" to listOf(ReplyBlock.Text("讲个故事"))),
+            attachmentsByMessageId = emptyMap(),
+            newMessageText = "",
+            newMessageFileIds = emptyList(),
+            options = RequestFactory.Options(false, false, false, false),
+            appendUserMessage = false,
+            assistantPrefill = "从前有座山",
+        )
+        assertEquals(2, req.messages.size)
+        assertEquals("user", req.messages[0].role)
+        assertEquals("assistant", req.messages[1].role)
+        assertEquals("从前有座山", req.messages[1].content.jsonPrimitive.content)
+        assertTrue(req.thinking!!.type == "disabled")
+    }
+
+    @Test
+    fun `继续生成拼接不重复已有正文`() {
+        val prefix = listOf(
+            ReplyBlock.Thinking("想了一下"),
+            ReplyBlock.Text("从前有座山"),
+        )
+        val continued = mergeContinuation(prefix, listOf(ReplyBlock.Text("，山上有座庙")))
+        assertEquals(2, continued.size)
+        assertTrue(continued[0] is ReplyBlock.Thinking)
+        assertEquals("从前有座山，山上有座庙", (continued[1] as ReplyBlock.Text).text)
+
+        val echoed = mergeContinuation(prefix, listOf(ReplyBlock.Text("从前有座山，山上有座庙")))
+        assertEquals(2, echoed.size)
+        assertTrue(echoed[0] is ReplyBlock.Thinking)
+        assertEquals("从前有座山，山上有座庙", (echoed[1] as ReplyBlock.Text).text)
+
+        val fresh = mergeContinuation(prefix, listOf(ReplyBlock.Text("完全另一段")))
+        assertEquals("从前有座山完全另一段", (fresh.last() as ReplyBlock.Text).text)
     }
 
     @Test

@@ -1,6 +1,8 @@
 package com.dsh.deepseek.feature.chat.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -38,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,6 +49,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -64,6 +70,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.SnackbarResult
 import com.dsh.deepseek.core.common.AppError
+import com.dsh.deepseek.core.model.ReplyStatus
 import com.dsh.deepseek.core.ui.DsIcon
 import com.dsh.deepseek.core.ui.LocalCenterHint
 import com.dsh.deepseek.core.ui.R as UiR
@@ -81,7 +88,7 @@ import kotlinx.coroutines.launch
  * - 会话切换时恢复草稿与滚动锚点
  * - 抽屉由 app 层的 ModalNavigationDrawer 装配
  */
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
@@ -145,7 +152,21 @@ fun ChatScreen(
         val uri = cameraUri.value
         if (ok && uri != null) viewModel.addAttachment(uri)
     }
+    fun launchCamera() {
+        val uri = cameraOutputUri(context)
+        cameraUri.value = uri
+        takePhoto.launch(uri)
+    }
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) launchCamera()
+    }
 
+    val imagePreview = remember { ImagePreviewController() }
+    SharedTransitionLayout(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(
+            LocalImagePreview provides imagePreview,
+            LocalSharedTransitionScope provides this,
+        ) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -213,6 +234,7 @@ fun ChatScreen(
                                 onSaveAnchor = viewModel::saveScrollAnchor,
                                 onCopied = { copiedHint = context.getString(UiR.string.copied) },
                                 onOpenSettings = onOpenSettings,
+                                onContinue = viewModel::continueGeneration,
                             )
                         }
                     }
@@ -236,9 +258,9 @@ fun ChatScreen(
                     },
                     onPickFile = { pickFile.launch(arrayOf("*/*")) },
                     onTakePhoto = {
-                        val uri = cameraOutputUri(context)
-                        cameraUri.value = uri
-                        takePhoto.launch(uri)
+                        val granted = context.checkSelfPermission(android.Manifest.permission.CAMERA) ==
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                        if (granted) launchCamera() else cameraPermission.launch(android.Manifest.permission.CAMERA)
                     },
                     onStartRecording = {
                         viewModel.onMicClick(context, hasPermission = true)
@@ -248,6 +270,8 @@ fun ChatScreen(
                     onCancelRecording = viewModel::cancelRecording,
                     onSetThinking = viewModel::setThinking,
                     onSetWebSearch = viewModel::setWebSearch,
+                    onSendPrompt = viewModel::sendSuggestion,
+                    onAddUri = viewModel::addAttachment,
                     onRemoveAttachment = viewModel::removeAttachment,
                     onRetryAttachment = viewModel::retryAttachmentUpload,
                     onExtractText = viewModel::extractText,
@@ -272,6 +296,11 @@ fun ChatScreen(
                     text = hint,
                     modifier = Modifier.align(Alignment.Center),
                 )
+            }
+        }
+    }
+            if (imagePreview.path != null) {
+                ImageExpandPreview(imagePreview)
             }
         }
     }
@@ -373,42 +402,87 @@ private fun MessageList(
     onSaveAnchor: (String?, Int) -> Unit,
     onCopied: () -> Unit,
     onOpenSettings: () -> Unit,
+    onContinue: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var appliedAnchorEpoch by remember { mutableLongStateOf(-1L) }
+    // 贴在底部时，输出变长就继续滚到末尾。手指拖动后松开，只有末尾仍在视口里才继续跟。
+    var stickToBottom by remember { mutableStateOf(true) }
+    var suppressStickUpdate by remember { mutableIntStateOf(0) }
 
-    val followBottom = remember { mutableStateOf(true) }
-    val isNearBottom by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-            last >= info.totalItemsCount - 2
-        }
+    fun atEnd(): Boolean {
+        val info = listState.layoutInfo
+        if (info.totalItemsCount == 0) return true
+        val last = info.visibleItemsInfo.lastOrNull() ?: return false
+        return last.index == info.totalItemsCount - 1 &&
+            last.offset + last.size <= info.viewportEndOffset + 48
     }
-    LaunchedEffect(isNearBottom) {
-        followBottom.value = isNearBottom
+
+    suspend fun scrollToEnd() {
+        val count = listState.layoutInfo.totalItemsCount
+        if (count <= 0) return
+        suppressStickUpdate++
+        listState.scrollToItem(count - 1)
+        listState.scroll { scrollBy(1_000_000f) }
+    }
+
+    LaunchedEffect(ui.isStreaming) {
+        if (ui.isStreaming) stickToBottom = true
     }
 
     val renderItems = buildRenderItems(ui)
     val emptyHome = renderItems.isEmpty() && !ui.isStreaming
+    val anchorEpoch = ui.pendingScrollAnchorEpoch
+    val anchorId = ui.pendingScrollAnchorId
+    val anchorOffset = ui.pendingScrollAnchorOffset
+    val draftTick = ui.streamingDraft?.blocks?.hashCode() ?: 0
 
-    LaunchedEffect(renderItems.size, ui.streamingDraft?.blocks?.hashCode(), ui.pendingScrollAnchorEpoch) {
-        if (emptyHome) return@LaunchedEffect
-        val epoch = ui.pendingScrollAnchorEpoch
-        val anchorId = ui.pendingScrollAnchorId
-        if (epoch > 0 && epoch != appliedAnchorEpoch && anchorId != null && renderItems.isNotEmpty()) {
+    LaunchedEffect(anchorEpoch, anchorId) {
+        if (anchorEpoch > 0 && anchorEpoch != appliedAnchorEpoch && anchorId != null && renderItems.isNotEmpty()) {
             val index = renderItems.indexOfFirst { it.id == anchorId }
-            appliedAnchorEpoch = epoch
+            appliedAnchorEpoch = anchorEpoch
             if (index >= 0) {
-                followBottom.value = false
-                listState.scrollToItem(index + 1, ui.pendingScrollAnchorOffset)
-                return@LaunchedEffect
+                stickToBottom = false
+                suppressStickUpdate++
+                listState.scrollToItem(index + 1, anchorOffset)
             }
         }
-        if (followBottom.value && renderItems.isNotEmpty()) {
-            listState.scrollToItem((renderItems.size - 1 + 1).coerceAtLeast(0))
+    }
+
+    LaunchedEffect(renderItems.size, draftTick, stickToBottom) {
+        if (emptyHome || !stickToBottom || renderItems.isEmpty()) return@LaunchedEffect
+        scrollToEnd()
+    }
+
+    // 同一条消息变高时（流式正文），条目数不变，靠最后一项高度再滚一次。
+    LaunchedEffect(stickToBottom) {
+        if (!stickToBottom) return@LaunchedEffect
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull()
+            info.totalItemsCount to (last?.size ?: 0)
+        }.collect {
+            if (stickToBottom && !atEnd()) scrollToEnd()
         }
+    }
+
+    LaunchedEffect(listState) {
+        var seenScroll = false
+        snapshotFlow { listState.isScrollInProgress }
+            .distinctUntilChanged()
+            .collect { scrolling ->
+                if (scrolling) {
+                    seenScroll = true
+                    return@collect
+                }
+                if (!seenScroll) return@collect
+                if (suppressStickUpdate > 0) {
+                    suppressStickUpdate = 0
+                    return@collect
+                }
+                stickToBottom = atEnd()
+            }
     }
 
     var userScrolled by remember { mutableStateOf(false) }
@@ -438,7 +512,19 @@ private fun MessageList(
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent(PointerEventPass.Initial)
+                                val dragged = event.changes.any {
+                                    it.pressed && it.previousPressed && it.positionChange() != androidx.compose.ui.geometry.Offset.Zero
+                                }
+                                if (dragged) stickToBottom = false
+                            }
+                        }
+                    },
             ) {
                 item(key = "header") { Spacer(Modifier.height(8.dp)) }
                 items(renderItems, key = { it.id }) { item ->
@@ -454,6 +540,14 @@ private fun MessageList(
                                 onToggleTts = { onToggleTts(item.uiMessage.message.id) },
                                 onCopied = onCopied,
                                 autoCollapseThinking = ui.autoCollapseThinking,
+                                onContinue = if (
+                                    item.uiMessage.message.status == ReplyStatus.STOPPED &&
+                                    item.uiMessage.message.id == renderItems.lastOrNull()?.id
+                                ) {
+                                    { onContinue(item.uiMessage.message.id) }
+                                } else {
+                                    null
+                                },
                             )
                             is RenderItem.Stream -> StreamPlaceholder(
                                 draft = item.draft,
@@ -466,9 +560,12 @@ private fun MessageList(
                 item(key = "footer") { Spacer(Modifier.height(8.dp)) }
             }
 
-            if (!isNearBottom && renderItems.isNotEmpty()) {
+            if (!atEnd() && renderItems.isNotEmpty()) {
                 Surface(
-                    onClick = { scope.launch { listState.animateScrollToItem(renderItems.size - 1) } },
+                    onClick = {
+                        stickToBottom = true
+                        scope.launch { scrollToEnd() }
+                    },
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,

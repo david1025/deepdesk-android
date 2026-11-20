@@ -3,6 +3,8 @@ package com.dsh.deepseek.feature.chat.engine
 import com.dsh.deepseek.core.model.ApiMessage
 import com.dsh.deepseek.core.model.ChatMessage
 import com.dsh.deepseek.core.model.FileRefBlock
+import com.dsh.deepseek.core.model.ImageFileBlock
+import com.dsh.deepseek.core.model.ImageFileSource
 import com.dsh.deepseek.core.model.MessageRequest
 import com.dsh.deepseek.core.model.ReplyBlock
 import com.dsh.deepseek.core.model.SafetyCheck
@@ -42,8 +44,8 @@ object RequestFactory {
             .filterIsInstance<ReplyBlock.Text>()
             .joinToString("\n") { it.text }
 
-    /** 用户消息 content：无附件时为纯字符串；带附件时为 [文本块 + file 引用块] 数组 */
-    private fun userContent(text: String, fileIds: List<String>) =
+    /** 用户消息 content：无附件时为纯字符串；带附件时为 [文本块 + 图片块或 file 引用块] 数组 */
+    private fun userContent(text: String, fileIds: List<String>, imageFileIds: Set<String>) =
         if (fileIds.isEmpty()) {
             JsonPrimitive(text)
         } else {
@@ -52,7 +54,16 @@ object RequestFactory {
                     add(json.encodeToJsonElement(TextBlock.serializer(), TextBlock(text = text)))
                 }
                 fileIds.forEach { id ->
-                    add(json.encodeToJsonElement(FileRefBlock.serializer(), FileRefBlock(fileId = id)))
+                    if (id in imageFileIds) {
+                        add(
+                            json.encodeToJsonElement(
+                                ImageFileBlock.serializer(),
+                                ImageFileBlock(source = ImageFileSource(fileId = id)),
+                            ),
+                        )
+                    } else {
+                        add(json.encodeToJsonElement(FileRefBlock.serializer(), FileRefBlock(fileId = id)))
+                    }
                 }
             }
         }
@@ -63,22 +74,29 @@ object RequestFactory {
         attachmentsByMessageId: Map<String, List<String>>,
         newMessageText: String,
         newMessageFileIds: List<String>,
+        /** 这些 file_id 是图片，按 Anthropic image.source.file 发送。 */
+        imageFileIds: Set<String> = emptySet(),
         options: Options,
         /** false = 历史已包含末尾用户消息（重新生成场景），不追加新消息 */
         appendUserMessage: Boolean = true,
+        /** 继续生成：把已写出的正文作为 assistant 前缀，模型接着写。 */
+        assistantPrefill: String? = null,
     ): MessageRequest {
         val messages = buildList {
             history.forEach { msg ->
                 val fileIds = attachmentsByMessageId[msg.id].orEmpty()
                 if (msg.role == "user") {
-                    add(ApiMessage("user", userContent(textOf(msg.id, blocksByMessageId), fileIds)))
+                    add(ApiMessage("user", userContent(textOf(msg.id, blocksByMessageId), fileIds, imageFileIds)))
                 } else {
                     val text = textOf(msg.id, blocksByMessageId)
                     if (text.isNotBlank()) add(ApiMessage.assistant(text))
                 }
             }
             if (appendUserMessage) {
-                add(ApiMessage("user", userContent(newMessageText, newMessageFileIds)))
+                add(ApiMessage("user", userContent(newMessageText, newMessageFileIds, imageFileIds)))
+            }
+            if (!assistantPrefill.isNullOrBlank()) {
+                add(ApiMessage.assistant(assistantPrefill))
             }
         }
 

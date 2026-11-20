@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="brand_name">DeepSeek Chat</string>
+    <string name="brand_name">DeepDesk</string>
     <string name="brand_subtitle">Third-party client</string>
     <string name="app_version">v1.1.0</string>
     <string name="app_version_short">1.1.0</string>
@@ -92,15 +92,16 @@
     <string name="verify_connectivity">Verify</string>
     <string name="verifying">Verifying…</string>
     <string name="delete_key">Delete key</string>
-    <string name="delete_api_key_title">Delete API Key</string>
+    <string name="delete_api_key_title">Delete API Key?</string>
     <string name="delete_api_key_message">You will need to enter a key again to continue chatting. Delete it?</string>
 
     <string name="data_intro">Importing a ZIP from the official site or chat-demo replaces local chats. Exports do not include the API Key or non-image attachments.</string>
     <string name="delete_all_sessions">Delete all chats</string>
-    <string name="delete_all_sessions_title">Delete all chats</string>
+    <string name="delete_all_sessions_title">Delete all chats?</string>
     <string name="delete_all_sessions_message">This deletes all local chats, messages, and attachments. Remote files and the API Key are not affected. This cannot be undone.</string>
     <string name="delete_all">Delete all</string>
     <string name="import_chats">Import chats</string>
+    <string name="import_confirm_title">Import chats?</string>
     <string name="export_chats">Export chats</string>
     <string name="import_replace">Import and replace</string>
     <string name="import_confirm_message">Importing replaces all local chats. The API Key and appearance settings are kept. This cannot be undone.</string>
@@ -175,7 +176,9 @@
     <string name="more">More</string>
     <string name="rename_chat">Rename</string>
     <string name="delete_chat">Delete chat</string>
+    <string name="delete_chat_question">Delete this chat?</string>
     <string name="delete_chat_message">Delete “%1$s” and all of its messages and attachments? This cannot be undone.</string>
+    <string name="delete_chat_irreversible">Deleted chats cannot be restored, and share links created from them will stop working.</string>
     <string name="delete_selected_chats">Delete %1$d selected chats?</string>
     <string name="extract_text">Extract text — %1$s</string>
     <string name="page_count">%1$d pages</string>
@@ -216,6 +219,13 @@
     <string name="reply_interrupted">Reply interrupted (network). Received content was kept.</string>
     <string name="generation_failed">Generation failed. You can retry.</string>
     <string name="generation_stopped">Generation stopped</string>
+    <string name="stopped_label">Stopped</string>
+    <string name="continue_generate">Continue</string>
+    <string name="attach_prompt_what">What is this</string>
+    <string name="attach_prompt_analyze">Analyze this</string>
+    <string name="attach_prompt_how">What should I do</string>
+    <string name="grant_more_photos">Allow more photos</string>
+    <string name="uploading_percent">Uploading %1$d%%</string>
     <string name="stop_speech">Stop reading</string>
     <string name="read_aloud">Read aloud</string>
     <string name="content_refused">This reply could not be generated due to the content safety policy.</string>

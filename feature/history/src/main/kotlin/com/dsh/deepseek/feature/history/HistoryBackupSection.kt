@@ -6,11 +6,10 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.dsh.deepseek.core.ui.DsConfirmDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -101,46 +100,32 @@ fun HistoryBackupHost(
                     if (notice.importing) UiR.string.import_failed_title else UiR.string.backup_write_failed,
                 )
         }
-        AlertDialog(
-            onDismissRequest = { historyViewModel.consumeOperation() },
-            title = { Text(title) },
-            text = { Text(body) },
-            confirmButton = {
-                TextButton(onClick = { historyViewModel.consumeOperation() }) {
-                    Text(stringResource(UiR.string.got_it))
-                }
-            },
+        DsConfirmDialog(
+            title = title,
+            message = body,
+            confirmLabel = stringResource(UiR.string.got_it),
+            onConfirm = { historyViewModel.consumeOperation() },
+            onDismiss = { historyViewModel.consumeOperation() },
         )
     }
 
     pendingImport?.let { file ->
-        AlertDialog(
-            onDismissRequest = {
+        DsConfirmDialog(
+            title = stringResource(UiR.string.import_confirm_title),
+            message = stringResource(UiR.string.import_confirm_message),
+            confirmLabel = stringResource(UiR.string.import_replace),
+            destructive = true,
+            dismissLabel = stringResource(UiR.string.cancel),
+            onConfirm = {
+                pendingImport = null
+                historyViewModel.import(file) { ok ->
+                    file.delete()
+                    if (ok) onImported()
+                }
+            },
+            onDismiss = {
                 file.delete()
                 pendingImport = null
-            },
-            title = { Text(stringResource(UiR.string.import_chats)) },
-            text = {
-                Text(stringResource(UiR.string.import_confirm_message))
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        pendingImport = null
-                        historyViewModel.import(file) { ok ->
-                            file.delete()
-                            if (ok) onImported()
-                        }
-                    },
-                ) { Text(stringResource(UiR.string.import_replace), color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = {
-                        file.delete()
-                        pendingImport = null
-                    },
-                ) { Text(stringResource(UiR.string.cancel)) }
             },
         )
     }

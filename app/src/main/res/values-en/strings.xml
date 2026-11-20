@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">DeepSeek Chat (3rd-party)</string>
+    <string name="app_name">DeepDesk</string>
     <string name="nav_drawer_history">History</string>
     <string name="new_chat">New chat</string>
     <string name="settings">Settings</string>

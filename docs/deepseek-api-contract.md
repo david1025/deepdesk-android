@@ -10,7 +10,7 @@
 - **请求**（`RequestFactory` 统一生成）：
   - `model`: `deepseek-flash`
   - `system`: 「你是由 DeepSeek 模型提供能力的 AI 助手。本应用是独立第三方客户端。」
-  - `messages`: 活跃分支历史 + 新消息（附件以 `[{type:"text"},{type:"file",file_id}]` 数组）
+  - `messages`: 活跃分支历史 + 新消息。文档附件为 `[{type:"text"},{type:"file",file_id}]`；图片必须是 `{type:"image",source:{type:"file",file_id}}`，不能用顶层 `type:"file"`
   - `thinking`: `{type: enabled|disabled}`（深度思考开关）
   - `tools`: `deepseek_web_search` / `deepseek_read_url`（按开关与 URL 检测决定）
   - `safety_check`: `{level: "high"}`（强制开启，§8）
@@ -32,7 +32,7 @@
 - **purpose 表**（§5.6）：图片/jpeg/png/gif/webp → `user_data`；PDF → `rich_layout_recognition`（图文混排）；Office → `text_recognition`；文本/表格/电子书 → `user_data`。
 - **大小上限**：图片 64 MiB；PDF/Office 100 MiB；文本/表格/电子书 32 MiB。本地预检（AttachmentTypeResolver），超限不上传。
 - **删除**：`DELETE /anthropic/v1/files/{file_id}`（显式远端清理）。
-- **消息引用**：`{"type":"file","file_id":"..."}`；附件记录持久化 `apiProtocol=ANTHROPIC_FILES`。
+- **消息引用**：文档 `{"type":"file","file_id":"..."}`；图片 `{"type":"image","source":{"type":"file","file_id":"..."}}`。附件记录持久化 `apiProtocol=ANTHROPIC_FILES`。
 
 ## 3. ASR（F11）
 

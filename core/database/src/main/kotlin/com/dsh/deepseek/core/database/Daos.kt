@@ -219,6 +219,9 @@ interface UsageDao {
     @Upsert
     suspend fun upsert(entity: UsageRecordEntity)
 
+    @Query("SELECT * FROM usage_records WHERE messageId = :messageId LIMIT 1")
+    suspend fun getByMessage(messageId: String): UsageRecordEntity?
+
     @Query("SELECT * FROM usage_records WHERE sessionId = :sessionId")
     fun observeBySession(sessionId: String): Flow<List<UsageRecordEntity>>
 

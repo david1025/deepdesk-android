@@ -287,10 +287,26 @@ class ChatRepository(
         model: String?,
         usage: UsageInfo,
         createdAt: Long = time.nowMillis(),
+        /** 继续生成：同一条回复再记一笔，累加到原用量上，避免覆盖前半段。 */
+        accumulate: Boolean = false,
     ) {
         val breakdown = TokenAccounting.from(usage)
         if (breakdown.isEmpty) return
-        val cny = TokenPricing.estimateCny(breakdown, model, createdAt)
+        val cnyMicros = TokenPricing.cnyToMicros(TokenPricing.estimateCny(breakdown, model, createdAt))
+        val existing = if (accumulate) usageDao.getByMessage(messageId) else null
+        if (existing != null) {
+            usageDao.upsert(
+                existing.copy(
+                    cacheHitTokens = existing.cacheHitTokens + breakdown.cacheHitTokens,
+                    cacheMissTokens = existing.cacheMissTokens + breakdown.cacheMissTokens,
+                    outputTokens = existing.outputTokens + breakdown.outputTokens,
+                    webSearchRequests = existing.webSearchRequests + breakdown.webSearchRequests,
+                    estimatedCostCnyMicros = existing.estimatedCostCnyMicros + cnyMicros,
+                    isPeak = existing.isPeak || TokenPricing.isPeak(createdAt),
+                ),
+            )
+            return
+        }
         val dayKey = Instant.ofEpochMilli(createdAt).atZone(ZoneId.systemDefault()).toLocalDate().toString()
         usageDao.upsert(
             UsageRecordEntity(
@@ -304,7 +320,7 @@ class ChatRepository(
                 cacheMissTokens = breakdown.cacheMissTokens,
                 outputTokens = breakdown.outputTokens,
                 webSearchRequests = breakdown.webSearchRequests,
-                estimatedCostCnyMicros = TokenPricing.cnyToMicros(cny),
+                estimatedCostCnyMicros = cnyMicros,
                 isPeak = TokenPricing.isPeak(createdAt),
             ),
         )

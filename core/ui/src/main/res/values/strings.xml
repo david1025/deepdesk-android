@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="brand_name">DeepSeek Chat</string>
+    <string name="brand_name">DeepDesk</string>
     <string name="brand_subtitle">第三方客户端</string>
     <string name="app_version">v1.1.0</string>
     <string name="app_version_short">1.1.0</string>
@@ -92,15 +92,16 @@
     <string name="verify_connectivity">验证连通性</string>
     <string name="verifying">验证中…</string>
     <string name="delete_key">删除密钥</string>
-    <string name="delete_api_key_title">删除 API Key</string>
+    <string name="delete_api_key_title">删除 API Key？</string>
     <string name="delete_api_key_message">删除后需重新填写才能继续对话。确定删除？</string>
 
     <string name="data_intro">导入官网或 chat-demo 导出的 ZIP 会替换本机会话。导出不含 API Key 与非图片附件原件。</string>
     <string name="delete_all_sessions">删除全部会话数据</string>
-    <string name="delete_all_sessions_title">删除全部会话数据</string>
+    <string name="delete_all_sessions_title">删除全部会话数据？</string>
     <string name="delete_all_sessions_message">将删除本机全部会话、消息与附件（不影响远端文件与 API Key）。该操作不可撤销。</string>
     <string name="delete_all">全部删除</string>
     <string name="import_chats">导入对话</string>
+    <string name="import_confirm_title">导入对话？</string>
     <string name="export_chats">导出对话</string>
     <string name="import_replace">导入并替换</string>
     <string name="import_confirm_message">导入将替换本机全部会话数据。API Key 与外观设置不受影响。该操作不可撤销。</string>
@@ -175,7 +176,9 @@
     <string name="more">更多</string>
     <string name="rename_chat">重命名对话</string>
     <string name="delete_chat">删除对话</string>
+    <string name="delete_chat_question">删除对话？</string>
     <string name="delete_chat_message">将删除「%1$s」及其全部消息与附件，该操作不可撤销。</string>
+    <string name="delete_chat_irreversible">删除后，对话将不可恢复，由该对话生成的分享链接也将失效。</string>
     <string name="delete_selected_chats">删除选择的 %1$d 个对话？</string>
     <string name="extract_text">提取文字 — %1$s</string>
     <string name="page_count">共 %1$d 页</string>
@@ -216,6 +219,13 @@
     <string name="reply_interrupted">回复中断（网络异常），已保留已接收内容</string>
     <string name="generation_failed">生成失败，可重试</string>
     <string name="generation_stopped">已停止生成</string>
+    <string name="stopped_label">已停止</string>
+    <string name="continue_generate">继续生成</string>
+    <string name="attach_prompt_what">这是什么</string>
+    <string name="attach_prompt_analyze">分析一下</string>
+    <string name="attach_prompt_how">怎么办</string>
+    <string name="grant_more_photos">授权更多可访问图片</string>
+    <string name="uploading_percent">上传中 %1$d%%</string>
     <string name="stop_speech">停止朗读</string>
     <string name="read_aloud">朗读</string>
     <string name="content_refused">根据内容安全政策，该内容无法生成回复。</string>

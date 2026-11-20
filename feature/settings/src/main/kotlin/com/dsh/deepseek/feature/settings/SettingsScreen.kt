@@ -23,7 +23,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -32,7 +31,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -52,6 +50,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.dsh.deepseek.core.datastore.Language
 import com.dsh.deepseek.core.datastore.ThemeMode
+import com.dsh.deepseek.core.ui.DsConfirmDialog
 import com.dsh.deepseek.core.ui.DsIcon
 import com.dsh.deepseek.core.ui.R as UiR
 
@@ -680,13 +679,13 @@ private fun ConfirmDialog(
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Text(message) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text(confirmLabel, color = MaterialTheme.colorScheme.error) }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(UiR.string.cancel)) } },
+    DsConfirmDialog(
+        title = title,
+        message = message,
+        confirmLabel = confirmLabel,
+        onConfirm = onConfirm,
+        onDismiss = onDismiss,
+        destructive = true,
+        dismissLabel = stringResource(UiR.string.cancel),
     )
 }

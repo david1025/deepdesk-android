@@ -29,6 +29,17 @@ object DeepSeekColors {
     val CodeBackgroundDark = Color(0xFF1E2025)
     /** 官方删除/危险操作红（APK night hangup `#F25A5A`）。 */
     val Danger = Color(0xFFF25A5A)
+    /** 侧栏当前会话底色，取自官方深色截图 `#283142`。 */
+    val SessionSelectedDark = Color(0xFF283142)
+    val SessionSelectedLight = Color(0xFFE7EDF6)
+    /** 深色侧栏选中标题，截图采样 `#7099EB`。 */
+    val SessionTitleDark = Color(0xFF7099EB)
+    /** 选中行上的三个点，截图采样约 `#9599A2`，不是标题蓝。 */
+    val SessionDotsDark = Color(0xFF9599A2)
+    val SessionDotsLight = Color(0xFF6B7280)
+    /** 长按打开菜单时的底色，中性灰，和选中蓝灰分开。 */
+    val SessionPressedDark = Color(0xFF3A3B40)
+    val SessionPressedLight = Color(0xFFE6E6EB)
 }
 
 /** 跟随应用内的浅色/深色，而不是系统栏。用户气泡色要用这个，避免应用浅色、系统深色时气泡反了。 */

@@ -72,10 +72,14 @@ class ChatOrchestrator(
         request: MessageRequest,
         model: String,
         thinkingEnabled: Boolean,
+        /** 继续生成：复用已停止的助手消息，不另开一条。 */
+        resumeMessageId: String? = null,
+        prefixBlocks: List<ReplyBlock> = emptyList(),
     ) {
         check(_running.value == null) { "已有生成任务进行中" }
 
-        val assistantId = time.newId()
+        val assistantId = resumeMessageId ?: time.newId()
+        val prefix = prefixBlocks
         val now = time.nowMillis()
         val assistantMessage = ChatMessage(
             id = assistantId,
@@ -87,20 +91,26 @@ class ChatOrchestrator(
             model = model,
             createdAt = now,
         )
-        val draftFlow = MutableStateFlow(DraftUi(sessionId, assistantId, emptyList(), ReplyStatus.STREAMING, thinkingEnabled))
+        val draftFlow = MutableStateFlow(
+            DraftUi(sessionId, assistantId, prefix, ReplyStatus.STREAMING, thinkingEnabled),
+        )
 
         val job = scope.launch {
-            // 先落库 PENDING 消息（与父消息指向同一事务）
-            repository.insertMessage(assistantMessage)
+            if (resumeMessageId == null) {
+                repository.insertMessage(assistantMessage)
+            } else {
+                repository.updateMessageStatus(assistantId, ReplyStatus.STREAMING)
+            }
             val reducer = MessageEventReducer()
             var stoppedByUser = false
+            fun shownBlocks() = mergeContinuation(prefix, reducer.snapshot().blocks.map { it.toReplyBlock() })
 
             val collect = streamClient.stream(request)
             try {
                 collect.collect { event ->
                     val changed = reducer.onEvent(event)
-                    if (changed) publishDraft(assistantId, sessionId, reducer, thinkingEnabled)
-                    if (changed && shouldPersist()) persistDraft(assistantId, reducer)
+                    if (changed) publishDraft(assistantId, sessionId, reducer, thinkingEnabled, prefix)
+                    if (changed && shouldPersist()) persistDraft(assistantId, shownBlocks())
                 }
             } catch (e: DeepSeekApiException) {
                 reducer.onEvent(httpErrorEvent(e))
@@ -123,15 +133,23 @@ class ChatOrchestrator(
             val finalStatus = when {
                 snapshot.refusal != null -> ReplyStatus.REFUSED
                 stoppedByUser -> ReplyStatus.STOPPED
-                snapshot.failure?.interrupted == true || (!snapshot.finished && snapshot.failure != null) -> ReplyStatus.INTERRUPTED
-                snapshot.finished && snapshot.failure == null -> ReplyStatus.DONE
-                snapshot.finished -> ReplyStatus.ERROR
+                snapshot.failure?.interrupted == true -> ReplyStatus.INTERRUPTED
+                snapshot.failure != null -> ReplyStatus.ERROR
+                snapshot.finished -> ReplyStatus.DONE
                 else -> ReplyStatus.INTERRUPTED // 无 message_stop 也无失败标记：按断流处理
             }
 
             // 用户取消后仍需完整落盘：挂到 NonCancellable
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                persistFinal(assistantId, sessionId, reducer, finalStatus, model)
+                persistFinal(
+                    assistantId,
+                    sessionId,
+                    shownBlocks(),
+                    reducer.snapshot(),
+                    finalStatus,
+                    model,
+                    accumulateUsage = resumeMessageId != null,
+                )
             }
             _running.value = null
         }
@@ -152,13 +170,14 @@ class ChatOrchestrator(
         sessionId: String,
         reducer: MessageEventReducer,
         thinking: Boolean,
+        prefix: List<ReplyBlock>,
     ) {
         val snap = reducer.snapshot()
         _running.value?.takeIf { it.assistantMessageId == assistantId }?.draft?.value =
             DraftUi(
                 sessionId = sessionId,
                 assistantMessageId = assistantId,
-                blocks = snap.blocks.map { it.toReplyBlock() },
+                blocks = mergeContinuation(prefix, snap.blocks.map { it.toReplyBlock() }),
                 status = ReplyStatus.STREAMING,
                 thinking = thinking,
                 usage = snap.usage,
@@ -172,9 +191,9 @@ class ChatOrchestrator(
         return lastPersist.compareAndSet(last, now)
     }
 
-    private suspend fun persistDraft(messageId: String, reducer: MessageEventReducer) {
+    private suspend fun persistDraft(messageId: String, blocks: List<ReplyBlock>) {
         try {
-            repository.replaceBlocks(messageId, reducer.snapshot().blocks.map { it.toReplyBlock() })
+            repository.replaceBlocks(messageId, blocks)
         } catch (e: Exception) {
             AppLog.w(TAG, "中途落盘失败（忽略）: ${e.message}")
         }
@@ -183,13 +202,14 @@ class ChatOrchestrator(
     private suspend fun persistFinal(
         messageId: String,
         sessionId: String,
-        reducer: MessageEventReducer,
+        blocks: List<ReplyBlock>,
+        snap: MessageEventReducer.Draft,
         status: ReplyStatus,
         model: String,
+        accumulateUsage: Boolean = false,
     ) {
         try {
-            val snap = reducer.snapshot()
-            repository.replaceBlocks(messageId, snap.blocks.map { it.toReplyBlock() })
+            repository.replaceBlocks(messageId, blocks)
             repository.updateMessageStatus(messageId, status)
             repository.touchConversation(sessionId)
 
@@ -199,6 +219,7 @@ class ChatOrchestrator(
                     messageId = messageId,
                     model = model,
                     usage = usage,
+                    accumulate = accumulateUsage,
                 )
             }
 
@@ -260,4 +281,24 @@ class ChatOrchestrator(
         private const val TAG = "ChatOrchestrator"
         private const val PERSIST_INTERVAL_MS = 400L
     }
+}
+
+/** 继续生成时把新流接到已写出的内容后面。正文首尾相接，不另起一段。 */
+internal fun mergeContinuation(prefix: List<ReplyBlock>, incoming: List<ReplyBlock>): List<ReplyBlock> {
+    if (incoming.isEmpty()) return prefix
+    if (prefix.isEmpty()) return incoming
+    val prefixText = prefix.filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }
+    val incomingText = incoming.filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }
+    if (prefixText.isNotBlank() && incomingText.startsWith(prefixText)) {
+        val kept = prefix.takeWhile { it !is ReplyBlock.Text }
+        val incomingHasThinking = incoming.any { it is ReplyBlock.Thinking }
+        return if (kept.isEmpty() || incomingHasThinking) incoming else kept + incoming
+    }
+    val last = prefix.last()
+    val first = incoming.first()
+    if (last is ReplyBlock.Text && first is ReplyBlock.Text) {
+        val joined = last.copy(text = last.text + first.text, citations = last.citations + first.citations)
+        return prefix.dropLast(1) + joined + incoming.drop(1)
+    }
+    return prefix + incoming
 }

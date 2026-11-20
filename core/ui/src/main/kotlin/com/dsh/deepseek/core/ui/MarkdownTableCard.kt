@@ -13,7 +13,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -37,11 +36,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -50,7 +52,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -223,13 +224,20 @@ private fun BorderedTable(rows: List<List<MarkdownTableCell>>, framed: Boolean) 
     if (cols == 0) return
     val rule = tableRuleColor()
     val shape = RoundedCornerShape(12.dp)
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val viewport = if (maxWidth == Dp.Infinity) 320.dp else maxWidth
+    val density = LocalDensity.current
+    val scroll = rememberScrollState()
+    // 用父级宽度，不用 BoxWithConstraints。共享元素的前瞻测量会让 SubcomposeLayout 无限递归。
+    var viewportPx by remember { mutableIntStateOf(0) }
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .onSizeChanged { size -> viewportPx = size.width },
+    ) {
+        if (viewportPx <= 0) return@Box
+        val viewport = with(density) { viewportPx.toDp() }
         val gap = 1.dp
         val colWidth = if (cols <= 1) viewport else (viewport - gap) / 2
-        val gridWidth = colWidth * cols + gap * (cols - 1)
-        val scroll = rememberScrollState()
-        val bounded = maxWidth != Dp.Infinity
+        val gridWidth = colWidth * cols + gap * (cols - 1).coerceAtLeast(0)
         val frame = if (framed) {
             Modifier
                 .clip(shape)
@@ -239,7 +247,7 @@ private fun BorderedTable(rows: List<List<MarkdownTableCell>>, framed: Boolean) 
         }
         Box(
             Modifier
-                .then(if (bounded) Modifier.fillMaxWidth() else Modifier.width(viewport))
+                .fillMaxWidth()
                 .then(frame)
                 .horizontalScroll(scroll),
         ) {

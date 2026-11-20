@@ -24,10 +24,9 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import androidx.annotation.DrawableRes
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -83,13 +82,14 @@ fun MessageRow(
     onToggleTts: () -> Unit,
     onCopied: () -> Unit = {},
     autoCollapseThinking: Boolean = true,
+    onContinue: (() -> Unit)? = null,
 ) {
     if (item.message.role == "user") {
         UserMessageRow(item, onEdit, onSwitchVersion, onCopied)
     } else {
         AssistantMessageRow(
             item, streaming, isSpeaking, onRegenerate, onSwitchVersion, onToggleTts, onCopied,
-            autoCollapseThinking,
+            autoCollapseThinking, onContinue,
         )
     }
 }
@@ -106,7 +106,7 @@ private fun UserMessageRow(
     val context = LocalContext.current
     var showEdit by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
-    var previewPath by remember { mutableStateOf<String?>(null) }
+    val imagePreview = LocalImagePreview.current
     val text = item.blocks.filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }
     val bubble = if (LocalDeepSeekDark.current) DeepSeekColors.UserBubbleDark else DeepSeekColors.UserBubbleLight
 
@@ -141,7 +141,7 @@ private fun UserMessageRow(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    UserAttachments(images, onOpenImage = { previewPath = it })
+                    UserAttachments(images, onOpenImage = { imagePreview?.open(it) })
                     if (text.isNotBlank()) {
                         Text(
                             text = text,
@@ -225,9 +225,6 @@ private fun UserMessageRow(
         )
     }
 
-    previewPath?.let { path ->
-        ImageLightbox(path = path, onDismiss = { previewPath = null })
-    }
 }
 
 private fun Attachment.isPreviewableImage(): Boolean {
@@ -340,31 +337,9 @@ private fun UserAttachments(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier
                     .size(160.dp)
+                    .sharedPreviewImage(path)
                     .clip(RoundedCornerShape(12.dp))
                     .clickable { onOpenImage(path) },
-            )
-        }
-    }
-}
-
-@Composable
-private fun ImageLightbox(path: String, onDismiss: () -> Unit) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black)
-                .clickable(onClick = onDismiss),
-            contentAlignment = Alignment.Center,
-        ) {
-            AsyncImage(
-                model = File(path),
-                contentDescription = stringResource(UiR.string.preview),
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize(),
             )
         }
     }
@@ -380,6 +355,7 @@ private fun AssistantMessageRow(
     onToggleTts: () -> Unit,
     onCopied: () -> Unit,
     autoCollapseThinking: Boolean,
+    onContinue: (() -> Unit)?,
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -445,7 +421,7 @@ private fun AssistantMessageRow(
             item.message.status == ReplyStatus.ERROR -> StatusBanner(
                 stringResource(UiR.string.generation_failed), retryable = true, onRetry = onRegenerate,
             )
-            item.message.status == ReplyStatus.STOPPED -> StatusBanner(stringResource(UiR.string.generation_stopped), retryable = false)
+            !streaming && item.message.status == ReplyStatus.STOPPED -> StoppedContinueRow(onContinue)
         }
 
         if (!streaming) {
@@ -536,6 +512,44 @@ fun RefusalCard() {
             color = MaterialTheme.colorScheme.onErrorContainer,
             modifier = Modifier.padding(12.dp),
         )
+    }
+}
+
+@Composable
+private fun StoppedContinueRow(onContinue: (() -> Unit)?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp),
+    ) {
+        Text(
+            text = stringResource(UiR.string.stopped_label),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        DsIcon(
+            UiR.drawable.ic_chevron_right_outline_20,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(16.dp),
+        )
+        Spacer(Modifier.weight(1f))
+        if (onContinue != null) {
+            Surface(
+                onClick = onContinue,
+                shape = RoundedCornerShape(20.dp),
+                color = Color.Transparent,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)),
+            ) {
+                Text(
+                    text = stringResource(UiR.string.continue_generate),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                )
+            }
+        }
     }
 }
 
