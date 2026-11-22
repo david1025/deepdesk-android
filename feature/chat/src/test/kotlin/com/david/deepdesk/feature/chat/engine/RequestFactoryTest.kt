@@ -2,6 +2,8 @@ package com.david.deepdesk.feature.chat.engine
 
 import com.david.deepdesk.core.model.ApiMessage
 import com.david.deepdesk.core.model.ChatMessage
+import com.david.deepdesk.core.model.ChatModels
+import com.david.deepdesk.core.model.MessageRequest
 import com.david.deepdesk.core.model.ReplyBlock
 import com.david.deepdesk.core.network.ApiJson
 import kotlinx.serialization.json.JsonPrimitive
@@ -51,6 +53,7 @@ class RequestFactoryTest {
         )
         assertEquals(RequestFactory.MODEL, req.model)
         assertEquals(RequestFactory.SYSTEM_PROMPT, req.system)
+        assertNull(req.outputConfig)
         // 历史 2 条 + 新消息 1 条
         assertEquals(3, req.messages.size)
         assertEquals("你好", req.messages[0].content.jsonPrimitive.content)
@@ -182,6 +185,61 @@ class RequestFactoryTest {
 
         val fresh = mergeContinuation(prefix, listOf(ReplyBlock.Text("完全另一段")))
         assertEquals("从前有座山完全另一段", (fresh.last() as ReplyBlock.Text).text)
+    }
+
+    @Test
+    fun `专业模式才写入模型和推理强度`() {
+        val off = RequestFactory.build(
+            history = emptyList(),
+            blocksByMessageId = emptyMap(),
+            attachmentsByMessageId = emptyMap(),
+            newMessageText = "你好",
+            newMessageFileIds = emptyList(),
+            options = RequestFactory.Options(true, false, false, false),
+        )
+        assertEquals(ChatModels.FLASH, off.model)
+        assertNull(off.outputConfig)
+        val offJson = ApiJson.encodeToString(MessageRequest.serializer(), off)
+        assertFalse(offJson.contains("output_config"))
+
+        val on = RequestFactory.build(
+            history = emptyList(),
+            blocksByMessageId = emptyMap(),
+            attachmentsByMessageId = emptyMap(),
+            newMessageText = "你好",
+            newMessageFileIds = emptyList(),
+            options = RequestFactory.Options(
+                thinkingEnabled = true,
+                webSearchEnabled = false,
+                readUrlEnabled = false,
+                titleEnabled = false,
+                model = ChatModels.PRO,
+                reasoningEffort = ChatModels.EFFORT_MAX,
+            ),
+        )
+        assertEquals(ChatModels.PRO, on.model)
+        assertEquals(ChatModels.EFFORT_MAX, on.outputConfig!!.effort)
+        assertEquals(RequestFactory.SYSTEM_PROMPT, on.system)
+        val onJson = ApiJson.encodeToString(MessageRequest.serializer(), on)
+        assertTrue(onJson.contains("\"output_config\""))
+        assertTrue(onJson.contains("\"effort\":\"max\"") || onJson.contains("\"effort\": \"max\""))
+
+        val listed = RequestFactory.build(
+            history = emptyList(),
+            blocksByMessageId = emptyMap(),
+            attachmentsByMessageId = emptyMap(),
+            newMessageText = "你好",
+            newMessageFileIds = emptyList(),
+            options = RequestFactory.Options(
+                thinkingEnabled = true,
+                webSearchEnabled = false,
+                readUrlEnabled = false,
+                titleEnabled = false,
+                model = "deepseek-chat",
+                reasoningEffort = ChatModels.EFFORT_HIGH,
+            ),
+        )
+        assertEquals("deepseek-chat", listed.model)
     }
 
     @Test

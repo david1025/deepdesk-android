@@ -7,6 +7,9 @@ import com.david.deepdesk.core.common.AppLog
 import com.david.deepdesk.core.model.ApiProtocol
 import com.david.deepdesk.core.model.Attachment
 import com.david.deepdesk.core.model.ChatMessage
+import com.david.deepdesk.core.model.ChatModels
+import com.david.deepdesk.core.model.ListedModel
+import com.david.deepdesk.core.model.toListedModel
 import com.david.deepdesk.core.model.ReplyBlock
 import com.david.deepdesk.core.model.ReplyStatus
 import com.david.deepdesk.core.model.TokenUsageTotals
@@ -16,6 +19,7 @@ import com.david.deepdesk.feature.attachments.AttachmentTypeResolver
 import com.david.deepdesk.feature.chat.data.ChatRepository
 import com.david.deepdesk.feature.chat.engine.ChatOrchestrator
 import com.david.deepdesk.feature.chat.engine.RequestFactory
+import com.david.deepdesk.core.network.DeepSeekApiException
 import com.david.deepdesk.core.ui.R as UiR
 import com.david.deepdesk.feature.voice.recording.RecordingController
 import com.david.deepdesk.feature.voice.tts.TtsPlayer
@@ -64,6 +68,7 @@ data class ChatUiState(
     val showRecognizedHint: Boolean = false,
     /** 语音识别提示（官方「未识别到内容」居中浮层） */
     val voiceHint: String? = null,
+    val toastHint: String? = null,
     /** 打开会话时恢复滚动位置；epoch 变化表示需要应用一次 */
     val pendingScrollAnchorId: String? = null,
     val pendingScrollAnchorOffset: Int = 0,
@@ -72,8 +77,17 @@ data class ChatUiState(
     val autoCollapseThinking: Boolean = true,
     val sessionUsage: TokenUsageTotals = TokenUsageTotals(),
     val showSessionUsageChip: Boolean = true,
+    val professionalMode: Boolean = false,
+    val modelId: String = ChatModels.FLASH,
+    val reasoningEffort: String = ChatModels.EFFORT_HIGH,
+    val catalogModels: List<ListedModel> = emptyList(),
+    val catalogLoading: Boolean = false,
+    val catalogError: String? = null,
 ) {
     val isStreaming: Boolean get() = streamingDraft != null
+    /** 专业模式选了不支持视觉的模型时，不能再发图片。关闭专业模式时与现在一样，Flash 可以发图。 */
+    val imagesEnabled: Boolean
+        get() = !professionalMode || ChatModels.visionOf(catalogModels, modelId)
     val canSend: Boolean
         get() = !isStreaming &&
             (draftText.isNotBlank() || pendingAttachments.any { it.uploadState != UploadState.UPLOADING })
@@ -153,6 +167,9 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                     autoReadEnabled = settings.autoReadEnabled,
                     autoCollapseThinking = settings.autoCollapseThinking,
                     showSessionUsageChip = settings.showSessionUsageChip,
+                    professionalMode = settings.professionalMode,
+                    modelId = settings.modelId,
+                    reasoningEffort = settings.reasoningEffort,
                     hasApiKey = services.hasApiKey(),
                 )
             }
@@ -191,15 +208,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             val allAttachments = services.repository.getAttachments(sessionId)
             val pending = allAttachments.filter { it.messageId == null && it.uploadState != UploadState.FAILED }
             if (data == null) {
-                val prev = _ui.value
-                _ui.value = ChatUiState(
-                    thinkingEnabled = prev.thinkingEnabled,
-                    webSearchEnabled = prev.webSearchEnabled,
-                    ttsVoiceId = prev.ttsVoiceId,
-                    autoReadEnabled = prev.autoReadEnabled,
-                    autoCollapseThinking = prev.autoCollapseThinking,
-                    hasApiKey = services.hasApiKey(),
-                )
+                _ui.value = preferencesOnly(_ui.value)
                 return@launch
             }
             val anchor = services.repository.getScrollAnchor(sessionId)
@@ -220,11 +229,40 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
         }
     }
 
+    /** 换会话时保留输入栏偏好。专业模式不能在回到聊天页时被清掉。 */
+    private fun preferencesOnly(prev: ChatUiState) = ChatUiState(
+        thinkingEnabled = prev.thinkingEnabled,
+        webSearchEnabled = prev.webSearchEnabled,
+        ttsVoiceId = prev.ttsVoiceId,
+        autoReadEnabled = prev.autoReadEnabled,
+        autoCollapseThinking = prev.autoCollapseThinking,
+        showSessionUsageChip = prev.showSessionUsageChip,
+        professionalMode = prev.professionalMode,
+        modelId = prev.modelId,
+        reasoningEffort = prev.reasoningEffort,
+        catalogModels = prev.catalogModels,
+        hasApiKey = services.hasApiKey(),
+    )
+
     private fun liveDraftFor(sessionId: String) =
         services.orchestrator.running.value
             ?.takeIf { it.sessionId == sessionId }
             ?.draft
             ?.value
+
+    /**
+     * 顶栏 / 侧栏新建。已经在空白新对话里时只提示，避免反复切页动画。
+     * @return true 已切到新对话，调用方可以导航到 chat/new。
+     */
+    fun requestNewSession(): Boolean {
+        val s = _ui.value
+        if (s.messages.isEmpty() && !s.isStreaming) {
+            _ui.value = s.copy(toastHint = str(UiR.string.already_in_new_chat))
+            return false
+        }
+        newSession()
+        return true
+    }
 
     /** 新建对话：不立即落库（首条消息发送时才创建会话行，避免空会话） */
     fun newSession() {
@@ -237,17 +275,8 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             prev.messages.isEmpty() && !prev.isStreaming
         }
         val leftoverAttachments = prev.pendingAttachments
-        _ui.value = ChatUiState(
-            sessionId = null,
+        _ui.value = preferencesOnly(prev).copy(
             conversationTitle = str(UiR.string.new_chat),
-            draftText = "",
-            pendingAttachments = emptyList(),
-            thinkingEnabled = prev.thinkingEnabled,
-            webSearchEnabled = prev.webSearchEnabled,
-            ttsVoiceId = prev.ttsVoiceId,
-            autoReadEnabled = prev.autoReadEnabled,
-            autoCollapseThinking = prev.autoCollapseThinking,
-            hasApiKey = services.hasApiKey(),
         )
         if (emptySessionId != null) {
             viewModelScope.launch(Dispatchers.IO) {
@@ -347,6 +376,83 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
         viewModelScope.launch { services.settingsStore.setDefaults(search = enabled) }
     }
 
+    /** 专业模式滑块。0 关闭思考；1/2/3 对应 low/high/max，并打开思考。 */
+    fun setThinkingLevel(level: Int) {
+        val effort = ChatModels.effortForLevel(level.coerceIn(0, 3))
+        _ui.value = _ui.value.copy(
+            thinkingEnabled = effort != null,
+            reasoningEffort = effort ?: _ui.value.reasoningEffort,
+        )
+        viewModelScope.launch {
+            services.settingsStore.setThinkingLevel(thinking = effort != null, effort = effort)
+        }
+    }
+
+    fun setChatModel(modelId: String) {
+        val model = ChatModels.sanitize(modelId)
+        val visionMessage = str(UiR.string.model_no_vision)
+        val blocksImages = !ChatModels.visionOf(_ui.value.catalogModels, model) &&
+            _ui.value.pendingAttachments.any { it.isImage }
+        val error = when {
+            blocksImages -> AppError(AppError.Kind.LOCAL, visionMessage)
+            _ui.value.error?.message == visionMessage -> null
+            else -> _ui.value.error
+        }
+        _ui.value = _ui.value.copy(modelId = model, error = error)
+        viewModelScope.launch { services.settingsStore.setModelId(model) }
+    }
+
+    /** GET /models，专业模式模型浮窗用。失败时仍给出 Flash / Pro，方便切换。 */
+    fun loadCatalogModels() {
+        if (_ui.value.catalogLoading) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _ui.value = _ui.value.copy(catalogLoading = true, catalogError = null)
+            try {
+                val listed = services.restApi.listModels().data.mapNotNull { it.toListedModel() }
+                val list = ChatModels.mergeCatalog(listed, _ui.value.modelId)
+                _ui.value = _ui.value.copy(catalogLoading = false, catalogModels = list, catalogError = null)
+            } catch (e: Exception) {
+                AppLog.w(TAG, "加载模型列表失败", e)
+                val message = when (e) {
+                    is DeepSeekApiException -> e.toAppError().message
+                    else -> str(UiR.string.network_error, e.message ?: "")
+                }
+                _ui.value = _ui.value.copy(
+                    catalogLoading = false,
+                    catalogModels = ChatModels.mergeCatalog(_ui.value.catalogModels, _ui.value.modelId),
+                    catalogError = message,
+                )
+            }
+        }
+    }
+
+    private fun currentModel(): String =
+        if (_ui.value.professionalMode) ChatModels.sanitize(_ui.value.modelId) else RequestFactory.MODEL
+
+    private fun currentOptions(
+        thinkingEnabled: Boolean,
+        webSearchEnabled: Boolean,
+        readUrlEnabled: Boolean,
+        titleEnabled: Boolean,
+    ) = RequestFactory.Options(
+        thinkingEnabled = thinkingEnabled,
+        webSearchEnabled = webSearchEnabled,
+        readUrlEnabled = readUrlEnabled,
+        titleEnabled = titleEnabled,
+        model = currentModel(),
+        reasoningEffort = if (_ui.value.professionalMode && thinkingEnabled) {
+            ChatModels.sanitizeEffort(_ui.value.reasoningEffort)
+        } else {
+            null
+        },
+    )
+
+    private fun rejectImages(imageFileIds: Set<String>): Boolean {
+        if (imageFileIds.isEmpty() || _ui.value.imagesEnabled) return false
+        _ui.value = _ui.value.copy(error = AppError(AppError.Kind.LOCAL, str(UiR.string.model_no_vision)))
+        return true
+    }
+
     // ------------------------------ 发送 / 停止 ------------------------------
 
     /** 发送：上传未上传附件 → 插入用户消息 → 绑定附件 → 发起生成（F02） */
@@ -363,6 +469,12 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             try {
                 // 首条消息或附件：先创建会话
                 val sessionId = ensureSessionId()
+                if (state.pendingAttachments.any { it.isImage } && !state.imagesEnabled) {
+                    _ui.value = _ui.value.copy(error = AppError(AppError.Kind.LOCAL, str(UiR.string.model_no_vision)))
+                    return@launch
+                }
+                val (existingPath, _) = services.repository.activePathWithBlocks(sessionId)
+                if (rejectImages(attachmentsByMessage(sessionId, existingPath).imageFileIds)) return@launch
                 // 1. 上传附件（未 UPLOADED 的失败附件不入请求）
                 val uploadedIds = mutableListOf<String>()
                 val newImageIds = mutableSetOf<String>()
@@ -412,7 +524,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                     newMessageText = text,
                     newMessageFileIds = uploadedIds,
                     imageFileIds = refs.imageFileIds + newImageIds,
-                    options = RequestFactory.Options(
+                    options = currentOptions(
                         thinkingEnabled = state.thinkingEnabled,
                         webSearchEnabled = state.webSearchEnabled,
                         readUrlEnabled = RequestFactory.containsUrl(text) || state.webSearchEnabled,
@@ -432,7 +544,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                     sessionId = sessionId,
                     parentMessageId = userMessage.id,
                     request = request,
-                    model = RequestFactory.MODEL,
+                    model = currentModel(),
                     thinkingEnabled = state.thinkingEnabled,
                 )
             } catch (e: Exception) {
@@ -497,7 +609,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
     }
 
     fun dismissVoiceHint() {
-        _ui.value = _ui.value.copy(voiceHint = null)
+        _ui.value = _ui.value.copy(voiceHint = null, toastHint = null)
     }
 
     // ------------------------------ 分支操作（F09） ------------------------------
@@ -523,6 +635,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 path.takeWhile { it.id != parentId } + path.firstOrNull { it.id == parentId }!!
             }
             val attByMsg = attachmentsByMessage(sessionId, history)
+            if (rejectImages(attByMsg.imageFileIds)) return@launch
             val request = RequestFactory.build(
                 history = history,
                 blocksByMessageId = blocks,
@@ -530,7 +643,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 imageFileIds = attByMsg.imageFileIds,
                 newMessageText = "",
                 newMessageFileIds = emptyList(),
-                options = RequestFactory.Options(
+                options = currentOptions(
                     thinkingEnabled = _ui.value.thinkingEnabled,
                     webSearchEnabled = _ui.value.webSearchEnabled,
                     readUrlEnabled = _ui.value.webSearchEnabled,
@@ -542,7 +655,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 sessionId = sessionId,
                 parentMessageId = parentId,
                 request = request,
-                model = RequestFactory.MODEL,
+                model = currentModel(),
                 thinkingEnabled = _ui.value.thinkingEnabled,
             )
         }
@@ -576,6 +689,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             // 已有正文时关掉思考：思考开启时，纯文本的 assistant 前缀会被接口拒绝。
             val continueThinking = prefill.isBlank() && _ui.value.thinkingEnabled
             val attByMsg = attachmentsByMessage(sessionId, history)
+            if (rejectImages(attByMsg.imageFileIds)) return@launch
             val request = RequestFactory.build(
                 history = history,
                 blocksByMessageId = blocks,
@@ -583,7 +697,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 imageFileIds = attByMsg.imageFileIds,
                 newMessageText = "",
                 newMessageFileIds = emptyList(),
-                options = RequestFactory.Options(
+                options = currentOptions(
                     thinkingEnabled = continueThinking,
                     webSearchEnabled = _ui.value.webSearchEnabled,
                     readUrlEnabled = _ui.value.webSearchEnabled,
@@ -596,7 +710,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 sessionId = sessionId,
                 parentMessageId = parentId,
                 request = request,
-                model = RequestFactory.MODEL,
+                model = currentModel(),
                 thinkingEnabled = continueThinking,
                 resumeMessageId = assistantMessageId,
                 prefixBlocks = prefix,
@@ -619,6 +733,10 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 ?: data.roots.firstOrNull { it.message.id == userMessageId }
                 ?: return@launch
 
+            val (pathBefore, _) = services.repository.activePathWithBlocks(sessionId)
+            val historyBefore = pathBefore.filter { it.id != userMessageId }
+            if (rejectImages(attachmentsByMessage(sessionId, historyBefore).imageFileIds)) return@launch
+
             val newUser = ChatMessage(
                 id = services.time.newId(),
                 sessionId = sessionId,
@@ -639,7 +757,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 imageFileIds = attByMsg.imageFileIds,
                 newMessageText = newText.trim(),
                 newMessageFileIds = emptyList(),
-                options = RequestFactory.Options(
+                options = currentOptions(
                     thinkingEnabled = _ui.value.thinkingEnabled,
                     webSearchEnabled = _ui.value.webSearchEnabled,
                     readUrlEnabled = RequestFactory.containsUrl(newText) || _ui.value.webSearchEnabled,
@@ -651,7 +769,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 sessionId = sessionId,
                 parentMessageId = newUser.id,
                 request = request,
-                model = RequestFactory.MODEL,
+                model = currentModel(),
                 thinkingEnabled = _ui.value.thinkingEnabled,
             )
         }
@@ -689,6 +807,11 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             try {
                 val sessionId = ensureSessionId()
                 val attachment = services.attachmentManager.importBlocking(uri, sessionId)
+                if (attachment.isImage && !_ui.value.imagesEnabled) {
+                    services.attachmentManager.deleteLocalFile(attachment)
+                    _ui.value = _ui.value.copy(error = AppError(AppError.Kind.LOCAL, str(UiR.string.model_no_vision)))
+                    return@launch
+                }
                 services.repository.insertAttachment(attachment)
                 _ui.value = _ui.value.copy(
                     pendingAttachments = _ui.value.pendingAttachments + attachment
@@ -846,6 +969,17 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 services.ttsPlayer.play(last.id, text, _ui.value.ttsVoiceId)
             }
         }
+    }
+
+    /** 音色页滑到另一张卡片时，用公开 TTS 接口读一句。 */
+    fun previewVoice(voiceId: String) {
+        if (!services.hasApiKey()) return
+        val sample = when (voiceId) {
+            "tide" -> str(UiR.string.voice_sample_tide)
+            "stella" -> str(UiR.string.voice_sample_stella)
+            else -> return
+        }
+        services.ttsPlayer.play("voice-preview", sample, voiceId)
     }
 
     fun onVoiceChanged(voiceId: String) {

@@ -129,6 +129,9 @@ class SettingsViewModel(
     fun setThinkingDefault(enabled: Boolean) = viewModelScope.launch { settingsStore.setDefaults(thinking = enabled) }
     fun setSearchDefault(enabled: Boolean) = viewModelScope.launch { settingsStore.setDefaults(search = enabled) }
     fun setAutoCollapseThinking(enabled: Boolean) = viewModelScope.launch { settingsStore.setAutoCollapseThinking(enabled) }
+    fun setProfessionalMode(enabled: Boolean) = viewModelScope.launch { settingsStore.setProfessionalMode(enabled) }
+    fun setModelId(modelId: String) = viewModelScope.launch { settingsStore.setModelId(modelId) }
+    fun setReasoningEffort(effort: String) = viewModelScope.launch { settingsStore.setReasoningEffort(effort) }
 
     fun clearAllData(onDone: () -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {

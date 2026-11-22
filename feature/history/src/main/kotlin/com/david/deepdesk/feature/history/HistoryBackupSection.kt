@@ -4,12 +4,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import com.david.deepdesk.core.ui.DsConfirmDialog
+import com.david.deepdesk.core.ui.DsMenuCard
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -138,26 +138,26 @@ fun HistoryBackupButtons(
     busy: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick = onImport, enabled = !busy) {
-                Text(stringResource(UiR.string.import_chats))
-            }
-            OutlinedButton(onClick = onExport, enabled = !busy) {
-                Text(stringResource(UiR.string.export_chats))
-            }
-        }
+    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        DsMenuCard(
+            title = stringResource(UiR.string.import_chats),
+            onClick = onImport,
+            enabled = !busy,
+            showChevron = true,
+        )
+        DsMenuCard(
+            title = stringResource(UiR.string.export_chats),
+            onClick = onExport,
+            enabled = !busy,
+            showChevron = true,
+        )
         if (busy) {
             Text(
                 stringResource(UiR.string.backup_working),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 8.dp),
             )
         }
-        Text(
-            stringResource(UiR.string.backup_hint),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
     }
 }

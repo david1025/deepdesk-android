@@ -106,6 +106,8 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import com.david.deepdesk.core.model.Attachment
+import com.david.deepdesk.core.model.ChatModels
+import com.david.deepdesk.core.model.ListedModel
 import com.david.deepdesk.core.model.TokenAccounting
 import com.david.deepdesk.core.model.TokenPricing
 import com.david.deepdesk.core.model.TokenUsageTotals
@@ -155,12 +157,29 @@ fun InputBar(
     ocrBusy: Boolean,
     onCancelArmedChange: (Boolean) -> Unit = {},
     showSessionUsage: Boolean = true,
+    imagesEnabled: Boolean = true,
+    pricingModel: String? = null,
+    professionalMode: Boolean = false,
+    modelId: String = ChatModels.FLASH,
+    reasoningEffort: String = ChatModels.EFFORT_HIGH,
+    onSetThinkingLevel: (Int) -> Unit = {},
+    onSetModel: (String) -> Unit = {},
+    catalogModels: List<ListedModel> = emptyList(),
+    catalogLoading: Boolean = false,
+    catalogError: String? = null,
+    onLoadModels: () -> Unit = {},
 ) {
     val holding = recordingState is RecordingController.State.Recording
-    val displayUsage = remember(sessionUsage, liveUsage) { sessionUsage.plusLive(liveUsage) }
+    val displayUsage = remember(sessionUsage, liveUsage, pricingModel) {
+        sessionUsage.plusLive(liveUsage, pricingModel)
+    }
     val showChip = showSessionUsage && !displayUsage.isEmpty
     var showUsageDialog by remember { mutableStateOf(false) }
     var attachSheetOpen by remember { mutableStateOf(false) }
+    var levelOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(professionalMode) {
+        if (!professionalMode) levelOpen = false
+    }
     var photoPrompted by remember { mutableStateOf(false) }
     val photoContext = LocalContext.current
     val photoDensity = LocalDensity.current
@@ -200,6 +219,18 @@ fun InputBar(
             InputRow(
                 draftText = draftText,
                 thinkingEnabled = thinkingEnabled,
+                professionalMode = professionalMode,
+                reasoningEffort = reasoningEffort,
+                levelOpen = levelOpen,
+                modelId = modelId,
+                onSetThinkingLevel = onSetThinkingLevel,
+                onSetModel = onSetModel,
+                catalogModels = catalogModels,
+                catalogLoading = catalogLoading,
+                catalogError = catalogError,
+                onLoadModels = onLoadModels,
+                onDismissThinkingLevel = { levelOpen = false },
+                onOpenThinkingLevel = { levelOpen = true },
                 webSearchEnabled = webSearchEnabled,
                 streaming = streaming,
                 holdingMic = holding,
@@ -209,6 +240,7 @@ fun InputBar(
                 onDraftChange = onDraftChange,
                 onSend = {
                     attachSheetOpen = false
+                    levelOpen = false
                     onSend()
                 },
                 onStop = onStop,
@@ -237,6 +269,7 @@ fun InputBar(
                     onAccessChanged = { photoAccessState = it },
                     photoPrompted = photoPrompted,
                     onPhotoPrompted = { photoPrompted = true },
+                    imagesEnabled = imagesEnabled,
                     onPickImage = onPickImage,
                     onPickFile = onPickFile,
                     onTakePhoto = onTakePhoto,
@@ -269,7 +302,7 @@ fun InputBar(
     }
 }
 
-private fun TokenUsageTotals.plusLive(live: UsageInfo?): TokenUsageTotals {
+private fun TokenUsageTotals.plusLive(live: UsageInfo?, model: String?): TokenUsageTotals {
     if (live == null) return this
     val extra = TokenAccounting.from(live)
     if (extra.isEmpty) return this
@@ -281,7 +314,7 @@ private fun TokenUsageTotals.plusLive(live: UsageInfo?): TokenUsageTotals {
         outputTokens = outputTokens + extra.outputTokens,
         webSearchRequests = webSearchRequests + extra.webSearchRequests,
         estimatedCostCnyMicros = estimatedCostCnyMicros + TokenPricing.cnyToMicros(
-            TokenPricing.estimateCny(extra, null, now),
+            TokenPricing.estimateCny(extra, model, now),
         ),
         hasPeak = hasPeak || peakNow,
         hasOffPeak = hasOffPeak || !peakNow,
@@ -408,6 +441,18 @@ private fun UsageDialogRow(label: String, value: String) {
 private fun InputRow(
     draftText: String,
     thinkingEnabled: Boolean,
+    professionalMode: Boolean,
+    reasoningEffort: String,
+    levelOpen: Boolean,
+    modelId: String,
+    onSetThinkingLevel: (Int) -> Unit,
+    onSetModel: (String) -> Unit,
+    catalogModels: List<ListedModel>,
+    catalogLoading: Boolean,
+    catalogError: String?,
+    onLoadModels: () -> Unit,
+    onDismissThinkingLevel: () -> Unit,
+    onOpenThinkingLevel: () -> Unit,
     webSearchEnabled: Boolean,
     streaming: Boolean,
     holdingMic: Boolean,
@@ -510,7 +555,8 @@ private fun InputRow(
         color = MaterialTheme.colorScheme.surfaceContainer,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Column(Modifier.padding(start = 12.dp, end = 8.dp, top = 8.dp, bottom = 6.dp)) {
+        Column(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(start = 12.dp, end = 8.dp, top = 8.dp)) {
             PendingAttachments(
                 attachments = pendingAttachments,
                 enabled = !streaming,
@@ -574,13 +620,27 @@ private fun InputRow(
                     }
                 }
             }
+            }
+
+            ThinkingLevelAnchor(
+                open = levelOpen && professionalMode,
+                level = ChatModels.thinkingLevel(thinkingEnabled, reasoningEffort),
+                modelId = modelId,
+                catalogModels = catalogModels,
+                catalogLoading = catalogLoading,
+                catalogError = catalogError,
+                onLevel = onSetThinkingLevel,
+                onModel = onSetModel,
+                onLoadModels = onLoadModels,
+                onDismiss = onDismissThinkingLevel,
+            )
 
             val threeTrail = attachSheetOpen && canSend && !streaming && !voiceMode
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 4.dp),
+                    .padding(start = 12.dp, end = 8.dp, top = 4.dp, bottom = 6.dp),
             ) {
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -593,9 +653,24 @@ private fun InputRow(
                         icon = {
                             DsIcon(UiR.drawable.ic_think_outline_16, null, modifier = Modifier.size(16.dp))
                         },
-                        label = stringResource(UiR.string.thinking_toggle),
+                        label = if (professionalMode) {
+                            val level = ChatModels.thinkingLevel(thinkingEnabled, reasoningEffort)
+                            val name = when (level) {
+                                0 -> stringResource(UiR.string.thinking_stop_off)
+                                1 -> stringResource(UiR.string.effort_low)
+                                3 -> stringResource(UiR.string.thinking_stop_max)
+                                else -> stringResource(UiR.string.effort_high)
+                            }
+                            stringResource(UiR.string.thinking_chip, name)
+                        } else {
+                            stringResource(UiR.string.thinking_toggle)
+                        },
                         checked = thinkingEnabled,
-                        onChange = onSetThinking,
+                        onChange = if (professionalMode) {
+                            { onOpenThinkingLevel() }
+                        } else {
+                            onSetThinking
+                        },
                         modifier = Modifier.weight(1f, fill = false),
                     )
                     ToggleChip(
@@ -657,7 +732,7 @@ private fun InputRow(
                     stringResource(UiR.string.mic_denied),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(top = 4.dp),
+                    modifier = Modifier.padding(start = 12.dp, end = 8.dp, bottom = 6.dp),
                 )
             }
         }
@@ -731,6 +806,7 @@ private fun AttachSheet(
     onPhotoPrompted: () -> Unit,
     onPickImage: () -> Unit,
     onPickFile: () -> Unit,
+    imagesEnabled: Boolean,
     onTakePhoto: () -> Unit,
     onAddUri: (Uri) -> Unit,
     onRemove: (String) -> Unit,
@@ -739,13 +815,14 @@ private fun AttachSheet(
     val askPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
         onAccessChanged(photoAccess(context))
     }
-    LaunchedEffect(access) {
+    LaunchedEffect(access, imagesEnabled) {
+        if (!imagesEnabled) return@LaunchedEffect
         if (!photoPrompted && access == PhotoAccess.NONE) {
             onPhotoPrompted()
             askPermission.launch(photoPermissionRequest())
         }
     }
-    val showPhotoRow = access != PhotoAccess.FULL || photos.isNotEmpty() || !photosReady
+    val showPhotoRow = imagesEnabled && (access != PhotoAccess.FULL || photos.isNotEmpty() || !photosReady)
     val photoPx = with(LocalDensity.current) { 72.dp.roundToPx() }
     Column(Modifier.padding(top = 8.dp)) {
         if (showPhotoRow) {
@@ -817,14 +894,24 @@ private fun AttachSheet(
             }
         }
         }
+        if (!imagesEnabled) {
+            Text(
+                stringResource(UiR.string.model_no_vision_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 12.dp),
         ) {
-            AttachAction(UiR.drawable.ic_camera_outline_20, stringResource(UiR.string.take_photo), Modifier.weight(1f), onTakePhoto)
-            AttachAction(UiR.drawable.ic_photo_outline_20, stringResource(UiR.string.album), Modifier.weight(1f), onPickImage)
+            if (imagesEnabled) {
+                AttachAction(UiR.drawable.ic_camera_outline_20, stringResource(UiR.string.take_photo), Modifier.weight(1f), onTakePhoto)
+                AttachAction(UiR.drawable.ic_photo_outline_20, stringResource(UiR.string.album), Modifier.weight(1f), onPickImage)
+            }
             AttachAction(UiR.drawable.ic_folder_outline_20, stringResource(UiR.string.file), Modifier.weight(1f), onPickFile)
         }
     }

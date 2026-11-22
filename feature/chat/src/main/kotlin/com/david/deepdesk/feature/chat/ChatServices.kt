@@ -4,6 +4,7 @@ import android.content.Context
 import com.david.deepdesk.core.common.TimeProvider
 import com.david.deepdesk.core.datastore.BalanceRepository
 import com.david.deepdesk.core.datastore.SettingsStore
+import com.david.deepdesk.core.network.DeepSeekRestApi
 import com.david.deepdesk.core.network.FilesApiClient
 import com.david.deepdesk.core.network.ToolsApiClient
 import com.david.deepdesk.feature.attachments.AttachmentManager
@@ -22,6 +23,7 @@ class ChatServices(
     val orchestrator: ChatOrchestrator,
     val filesClient: FilesApiClient,
     val toolsClient: ToolsApiClient,
+    val restApi: DeepSeekRestApi,
     val attachmentManager: AttachmentManager,
     val recordingController: RecordingController,
     val asrExecutor: AsrExecutor,

@@ -29,6 +29,12 @@ object DeepSeekColors {
     val CodeBackgroundDark = Color(0xFF1E2025)
     /** 官方删除/危险操作红（APK night hangup `#F25A5A`）。 */
     val Danger = Color(0xFFF25A5A)
+    /** 确认弹框和主按钮的蓝色，取自官方「确认」胶囊。 */
+    val PillBlue = Color(0xFF416FFD)
+    /** 危险确认胶囊，取自官方删除弹框按钮。 */
+    val PillDanger = Color(0xFFE34343)
+    /** 设置开关打开时的绿色。 */
+    val SwitchOn = Color(0xFF29C363)
     /** 侧栏当前会话底色，取自官方深色截图 `#283142`。 */
     val SessionSelectedDark = Color(0xFF283142)
     val SessionSelectedLight = Color(0xFFE7EDF6)

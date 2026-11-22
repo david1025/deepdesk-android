@@ -2,8 +2,8 @@
 <resources>
     <string name="brand_name">DeepDesk</string>
     <string name="brand_subtitle">第三方客户端</string>
-    <string name="app_version">v1.1.0</string>
-    <string name="app_version_short">1.1.0</string>
+    <string name="app_version">v1.2.0</string>
+    <string name="app_version_short">1.2.0</string>
 
     <string name="settings">设置</string>
     <string name="back">返回</string>
@@ -20,6 +20,7 @@
     <string name="go_to_settings">去设置</string>
     <string name="new_chat">新对话</string>
     <string name="new_chat_action">新建对话</string>
+    <string name="already_in_new_chat">已经在新对话中</string>
     <string name="open_history">打开历史记录</string>
     <string name="scroll_to_bottom">回到底部</string>
     <string name="auto_read_on">关闭自动朗读</string>
@@ -83,8 +84,38 @@
     <string name="theme_follow_system">跟随系统</string>
     <string name="voice_stella">海星</string>
     <string name="voice_stella_full">海星（女声）</string>
+    <string name="voice_stella_desc">俏皮甜美</string>
     <string name="voice_tide">暗潮</string>
     <string name="voice_tide_full">暗潮（男声）</string>
+    <string name="voice_tide_desc">低沉浑厚</string>
+    <string name="voice_confirm">确认</string>
+    <string name="voice_sample_stella">你好，我是海星。</string>
+    <string name="voice_sample_tide">你好，我是暗潮。</string>
+    <string name="professional_mode">专业模式</string>
+    <string name="professional_mode_sub">开启后，输入框里用滑块选择思考档位，并从接口返回的模型列表里切换模型。关闭时仍使用 DeepSeek Flash 和现在的深度思考开关。</string>
+    <string name="professional_on">已开启</string>
+    <string name="model_label">模型</string>
+    <string name="model_vision_badge">视觉</string>
+    <string name="thinking_strength">思考强度</string>
+
+    <string name="reasoning_effort">推理强度</string>
+    <string name="reasoning_effort_sub">深度思考开启后按这个强度请求。可选低、高、最大。</string>
+    <string name="effort_low">低</string>
+    <string name="effort_high">高</string>
+    <string name="effort_max">最大</string>
+    <string name="model_no_vision">当前模型不支持图片。请改用 DeepSeek Flash，或去掉图片后再发送。</string>
+    <string name="model_no_vision_hint">当前模型不支持图片，只能添加文件。</string>
+    <string name="thinking_stop_off">关闭</string>
+    <string name="thinking_stop_max">最高</string>
+    <string name="thinking_chip">思考: %1$s</string>
+    <string name="thinking_slider_hint">拖动滑块或点击档位，决定模型想多久再回答</string>
+    <string name="model_switch">模型 · %1$s</string>
+    <string name="model_list_loading">正在加载模型列表</string>
+    <string name="model_list_retry">加载失败，点击重试</string>
+    <string name="thinking_caption_off">不思考，直接回答</string>
+    <string name="thinking_caption_low">轻量思考，适合简单问题</string>
+    <string name="thinking_caption_high">深入思考，适合复杂问题</string>
+    <string name="thinking_caption_max">充分思考，适合难题</string>
 
     <string name="api_key_intro">本客户端不登录官方账号。把 DeepSeek 开放平台的 API Key 填在这里即可开始对话。密钥经 Android Keystore 加密后只保存在本机，不会上传或进入 ZIP 备份。</string>
     <string name="api_key_saved_hidden">已配置 API Key（加密存储，不回显）</string>
@@ -96,13 +127,13 @@
     <string name="delete_api_key_message">删除后需重新填写才能继续对话。确定删除？</string>
 
     <string name="data_intro">导入官网或 chat-demo 导出的 ZIP 会替换本机会话。导出不含 API Key 与非图片附件原件。</string>
-    <string name="delete_all_sessions">删除全部会话数据</string>
+    <string name="delete_all_sessions">删除所有数据</string>
     <string name="delete_all_sessions_title">删除全部会话数据？</string>
     <string name="delete_all_sessions_message">将删除本机全部会话、消息与附件（不影响远端文件与 API Key）。该操作不可撤销。</string>
-    <string name="delete_all">全部删除</string>
+    <string name="delete_all">删除所有数据</string>
     <string name="import_chats">导入对话</string>
     <string name="import_confirm_title">导入对话？</string>
-    <string name="export_chats">导出对话</string>
+    <string name="export_chats">导出所有会话</string>
     <string name="import_replace">导入并替换</string>
     <string name="import_confirm_message">导入将替换本机全部会话数据。API Key 与外观设置不受影响。该操作不可撤销。</string>
     <string name="backup_hint">支持官网 chat.deepseek.com 与 chat-demo 导出的 ZIP（v3）。导入会替换本机会话，不含 API Key。</string>

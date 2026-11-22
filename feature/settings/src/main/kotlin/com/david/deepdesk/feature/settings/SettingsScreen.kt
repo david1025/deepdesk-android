@@ -6,6 +6,9 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,26 +28,37 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.david.deepdesk.core.ui.DeepSeekColors
+import com.david.deepdesk.core.ui.DsMenuCard
+import com.david.deepdesk.core.ui.DsPillButton
+import com.david.deepdesk.core.ui.DsSwitch
+import com.david.deepdesk.core.ui.LocalDeepSeekDark
+import com.david.deepdesk.core.ui.settingsCardColor
+import kotlinx.coroutines.launch
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -77,6 +91,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     backupSection: @Composable () -> Unit = {},
     startRoute: String = SettingsRoutes.Home,
+    onPreviewVoice: (String) -> Unit = {},
 ) {
     val keyState by viewModel.keyState.collectAsState()
     val settings by viewModel.settings.collectAsState()
@@ -90,10 +105,11 @@ fun SettingsScreen(
         navController.navigate(route) { launchSingleTop = true }
     }
 
+    val pageBg = if (LocalDeepSeekDark.current) MaterialTheme.colorScheme.background else Color(0xFFF2F2F2)
     Box(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(pageBg),
     ) {
         NavHost(
             navController = navController,
@@ -111,6 +127,7 @@ fun SettingsScreen(
                         languageLabel = languageLabel(settings.language),
                         themeLabel = themeLabel(settings.themeMode),
                         voiceLabel = voiceLabel(settings.voiceId),
+                        professionalOn = settings.professionalMode,
                         onOpen = { open(it) },
                     )
                 }
@@ -167,13 +184,14 @@ fun SettingsScreen(
             }
             composable(SettingsRoutes.Voice) {
                 SettingsPageScaffold(title = stringResource(UiR.string.voice_tone), onBack = { navController.popBackStack() }) {
-                    OptionPage(
-                        options = listOf(
-                            stringResource(UiR.string.voice_stella_full) to "stella",
-                            stringResource(UiR.string.voice_tide_full) to "tide",
-                        ),
-                        selected = settings.voiceId,
-                        onSelect = viewModel::setVoice,
+                    VoicePickerPage(
+                        selectedId = settings.voiceId,
+                        canPreview = keyState.configured,
+                        onPreview = onPreviewVoice,
+                        onConfirm = { id ->
+                            viewModel.setVoice(id)
+                            navController.popBackStack()
+                        },
                     )
                 }
             }
@@ -183,9 +201,11 @@ fun SettingsScreen(
                         thinking = settings.thinkingEnabledByDefault,
                         webSearch = settings.webSearchEnabledByDefault,
                         autoCollapse = settings.autoCollapseThinking,
+                        professional = settings.professionalMode,
                         onThinking = viewModel::setThinkingDefault,
                         onWebSearch = viewModel::setSearchDefault,
                         onAutoCollapse = viewModel::setAutoCollapseThinking,
+                        onProfessional = viewModel::setProfessionalMode,
                     )
                 }
             }
@@ -237,10 +257,11 @@ internal fun SettingsPageScaffold(
     onBack: () -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    val pageBg = if (LocalDeepSeekDark.current) MaterialTheme.colorScheme.background else Color(0xFFF2F2F2)
     Column(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(pageBg)
             .systemBarsPadding(),
     ) {
         SettingsTopBar(title = title, onBack = onBack)
@@ -262,6 +283,7 @@ private fun SettingsHome(
     languageLabel: String,
     themeLabel: String,
     voiceLabel: String,
+    professionalOn: Boolean,
     onOpen: (String) -> Unit,
 ) {
     SettingsGroup(stringResource(UiR.string.group_account)) {
@@ -302,6 +324,7 @@ private fun SettingsHome(
         SettingsRow(
             icon = UiR.drawable.ic_think_outline_16,
             title = stringResource(UiR.string.personalize),
+            value = if (professionalOn) stringResource(UiR.string.professional_on) else null,
             onClick = { onOpen(SettingsRoutes.Personalize) },
         )
     }
@@ -335,9 +358,10 @@ private fun ApiKeyPage(
 ) {
     Text(
         stringResource(UiR.string.api_key_intro),
-        style = MaterialTheme.typography.bodySmall,
+        fontSize = 13.sp,
+        lineHeight = 20.sp,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+        modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
     )
     SettingsCard {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -350,26 +374,8 @@ private fun ApiKeyPage(
                     visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onSave, enabled = keyInput.isNotBlank()) {
-                        Text(stringResource(UiR.string.save))
-                    }
-                    OutlinedButton(onClick = onSaveAndTest, enabled = keyInput.isNotBlank()) {
-                        Text(stringResource(UiR.string.save_and_verify))
-                    }
-                }
             } else {
                 Text(stringResource(UiR.string.api_key_saved_hidden), style = MaterialTheme.typography.bodyMedium)
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onTest, enabled = !keyState.testing) {
-                        Text(
-                            stringResource(
-                                if (keyState.testing) UiR.string.verifying else UiR.string.verify_connectivity,
-                            ),
-                        )
-                    }
-                    OutlinedButton(onClick = onDelete) { Text(stringResource(UiR.string.delete_key)) }
-                }
             }
             keyState.testResult?.let { result ->
                 Text(
@@ -380,6 +386,32 @@ private fun ApiKeyPage(
             }
         }
     }
+    Spacer(Modifier.height(16.dp))
+    if (!keyState.configured) {
+        DsPillButton(
+            text = stringResource(UiR.string.save),
+            onClick = onSave,
+            enabled = keyInput.isNotBlank(),
+        )
+        Spacer(Modifier.height(12.dp))
+        DsPillButton(
+            text = stringResource(UiR.string.save_and_verify),
+            onClick = onSaveAndTest,
+            enabled = keyInput.isNotBlank(),
+        )
+    } else {
+        DsPillButton(
+            text = stringResource(if (keyState.testing) UiR.string.verifying else UiR.string.verify_connectivity),
+            onClick = onTest,
+            enabled = !keyState.testing,
+        )
+        Spacer(Modifier.height(12.dp))
+        DsMenuCard(
+            title = stringResource(UiR.string.delete_key),
+            onClick = onDelete,
+            titleColor = DeepSeekColors.PillDanger,
+        )
+    }
 }
 
 @Composable
@@ -387,17 +419,20 @@ private fun DataPage(
     backupSection: @Composable () -> Unit,
     onClearAll: () -> Unit,
 ) {
-    Text(
-        stringResource(UiR.string.data_intro),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
-    )
-    SettingsCard {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            backupSection()
-            OutlinedButton(onClick = onClearAll) { Text(stringResource(UiR.string.delete_all_sessions)) }
-        }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        backupSection()
+        Text(
+            stringResource(UiR.string.data_intro),
+            fontSize = 13.sp,
+            lineHeight = 20.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
+        DsMenuCard(
+            title = stringResource(UiR.string.delete_all_sessions),
+            onClick = onClearAll,
+            titleColor = DeepSeekColors.PillDanger,
+        )
     }
 }
 
@@ -407,19 +442,25 @@ private fun <T> OptionPage(
     selected: T,
     onSelect: (T) -> Unit,
 ) {
-    SettingsCard {
-        options.forEachIndexed { index, (label, value) ->
-            if (index > 0) GroupDivider()
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect(value) }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            ) {
-                RadioButton(selected = selected == value, onClick = { onSelect(value) })
-                Text(label, style = MaterialTheme.typography.bodyLarge)
-            }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        options.forEach { (label, value) ->
+            val chosen = selected == value
+            DsMenuCard(
+                title = label,
+                onClick = { onSelect(value) },
+                trailing = if (chosen) {
+                    {
+                        DsIcon(
+                            UiR.drawable.ic_check_outline_20,
+                            contentDescription = null,
+                            tint = DeepSeekColors.PillBlue,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                } else {
+                    null
+                },
+            )
         }
     }
 }
@@ -429,15 +470,23 @@ private fun PersonalizePage(
     thinking: Boolean,
     webSearch: Boolean,
     autoCollapse: Boolean,
+    professional: Boolean,
     onThinking: (Boolean) -> Unit,
     onWebSearch: (Boolean) -> Unit,
     onAutoCollapse: (Boolean) -> Unit,
+    onProfessional: (Boolean) -> Unit,
 ) {
-    SettingsCard {
-        SwitchRow(stringResource(UiR.string.default_thinking), thinking, onThinking)
-        GroupDivider()
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        SwitchRow(
+            title = stringResource(UiR.string.professional_mode),
+            checked = professional,
+            onChange = onProfessional,
+            subtitle = stringResource(UiR.string.professional_mode_sub),
+        )
+        if (!professional) {
+            SwitchRow(stringResource(UiR.string.default_thinking), thinking, onThinking)
+        }
         SwitchRow(stringResource(UiR.string.default_search), webSearch, onWebSearch)
-        GroupDivider()
         SwitchRow(
             title = stringResource(UiR.string.auto_collapse_thinking),
             checked = autoCollapse,
@@ -454,24 +503,21 @@ internal fun SwitchRow(
     onChange: (Boolean) -> Unit,
     subtitle: String? = null,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onChange(!checked) }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-    ) {
-        Column(Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            if (subtitle != null) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+    Column(Modifier.fillMaxWidth()) {
+        DsMenuCard(
+            title = title,
+            onClick = { onChange(!checked) },
+            trailing = { DsSwitch(checked = checked, onCheckedChange = onChange) },
+        )
+        if (subtitle != null) {
+            Text(
+                subtitle,
+                fontSize = 13.sp,
+                lineHeight = 20.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 8.dp, end = 8.dp, top = 10.dp),
+            )
         }
-        Switch(checked = checked, onCheckedChange = onChange)
     }
 }
 
@@ -541,7 +587,7 @@ private fun SettingsTopBar(title: String, onBack: () -> Unit) {
     ) {
         Surface(
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = settingsCardColor(),
             modifier = Modifier
                 .size(40.dp)
                 .align(Alignment.CenterStart)
@@ -578,8 +624,8 @@ private fun SettingsGroup(label: String, content: @Composable () -> Unit) {
 @Composable
 internal fun SettingsCard(content: @Composable () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
+        shape = RoundedCornerShape(20.dp),
+        color = settingsCardColor(),
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column { content() }
@@ -670,6 +716,113 @@ private fun languageLabel(language: Language) = stringResource(
 private fun voiceLabel(id: String) = stringResource(
     if (id == "tide") UiR.string.voice_tide else UiR.string.voice_stella,
 )
+
+private data class VoiceChoice(
+    val apiId: String,
+    val nameRes: Int,
+    val descRes: Int,
+    val color: Color,
+)
+
+/** 公开 TTS 接口只有这两个 voice_id。 */
+private val VoiceChoices = listOf(
+    VoiceChoice("stella", UiR.string.voice_stella, UiR.string.voice_stella_desc, Color(0xFFFFB6C9)),
+    VoiceChoice("tide", UiR.string.voice_tide, UiR.string.voice_tide_desc, Color(0xFF9AADC9)),
+)
+
+@Composable
+private fun VoicePickerPage(
+    selectedId: String,
+    canPreview: Boolean,
+    onPreview: (String) -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    val initial = VoiceChoices.indexOfFirst { it.apiId == selectedId }.let { if (it < 0) 0 else it }
+    val pagerState = rememberPagerState(initialPage = initial, pageCount = { VoiceChoices.size })
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(pagerState, canPreview) {
+        var first = true
+        snapshotFlow { pagerState.settledPage }.collect { page ->
+            if (first) {
+                first = false
+                return@collect
+            }
+            val apiId = VoiceChoices.getOrNull(page)?.apiId ?: return@collect
+            if (canPreview) onPreview(apiId)
+        }
+    }
+    val page = pagerState.currentPage.coerceIn(0, VoiceChoices.lastIndex)
+    val current = VoiceChoices[page]
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 12.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        HorizontalPager(
+            state = pagerState,
+            contentPadding = PaddingValues(horizontal = 48.dp),
+            pageSpacing = 12.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(300.dp),
+        ) { index ->
+            VoiceCard(VoiceChoices[index])
+        }
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+        ) {
+            VoiceChoices.indices.forEach { index ->
+                val selected = index == page
+                Box(
+                    Modifier
+                        .size(if (selected) 8.dp else 6.dp)
+                        .clip(CircleShape)
+                        .background(if (selected) DeepSeekColors.BrandBlue else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+                        .clickable { scope.launch { pagerState.animateScrollToPage(index) } },
+                )
+            }
+        }
+        DsPillButton(
+            text = stringResource(UiR.string.voice_confirm),
+            onClick = { onConfirm(current.apiId) },
+            modifier = Modifier.padding(top = 8.dp),
+        )
+    }
+}
+
+@Composable
+private fun VoiceCard(voice: VoiceChoice) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier
+                .size(width = 168.dp, height = 210.dp)
+                .clip(RoundedCornerShape(percent = 50))
+                .background(
+                    Brush.radialGradient(
+                        listOf(voice.color, voice.color.copy(alpha = 0.45f), voice.color.copy(alpha = 0.12f)),
+                    ),
+                ),
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            stringResource(voice.nameRes),
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            stringResource(voice.descRes),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
 
 @Composable
 private fun ConfirmDialog(

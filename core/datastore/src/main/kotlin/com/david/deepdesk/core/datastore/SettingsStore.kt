@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.david.deepdesk.core.model.ChatModels
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -22,6 +23,10 @@ data class AppSettings(
     val autoCollapseThinking: Boolean = true,
     /** 聊天输入框下方展示本会话 token 与估算花费；默认开启 */
     val showSessionUsageChip: Boolean = true,
+    /** 关闭时模型固定 Flash，不传推理强度。 */
+    val professionalMode: Boolean = false,
+    val modelId: String = ChatModels.FLASH,
+    val reasoningEffort: String = ChatModels.EFFORT_HIGH,
     val cachedBalance: CachedBalance = CachedBalance(),
 )
 
@@ -52,6 +57,9 @@ class SettingsStore(private val context: Context) {
         val AUTO_READ = stringPreferencesKey("auto_read")
         val AUTO_COLLAPSE_THINKING = stringPreferencesKey("auto_collapse_thinking")
         val SHOW_SESSION_USAGE = stringPreferencesKey("show_session_usage")
+        val PROFESSIONAL = stringPreferencesKey("professional_mode")
+        val MODEL = stringPreferencesKey("model_id")
+        val EFFORT = stringPreferencesKey("reasoning_effort")
         val BALANCE_CURRENCY = stringPreferencesKey("balance_currency")
         val BALANCE_TOTAL = stringPreferencesKey("balance_total")
         val BALANCE_GRANTED = stringPreferencesKey("balance_granted")
@@ -71,6 +79,9 @@ class SettingsStore(private val context: Context) {
             autoReadEnabled = prefs[Keys.AUTO_READ] == "true",
             autoCollapseThinking = prefs[Keys.AUTO_COLLAPSE_THINKING] != "false",
             showSessionUsageChip = prefs[Keys.SHOW_SESSION_USAGE] != "false",
+            professionalMode = prefs[Keys.PROFESSIONAL] == "true",
+            modelId = ChatModels.sanitize(prefs[Keys.MODEL] ?: ChatModels.FLASH),
+            reasoningEffort = ChatModels.sanitizeEffort(prefs[Keys.EFFORT] ?: ChatModels.EFFORT_HIGH),
             cachedBalance = CachedBalance(
                 available = prefs[Keys.BALANCE_AVAILABLE] == "true",
                 currency = prefs[Keys.BALANCE_CURRENCY] ?: "CNY",
@@ -112,6 +123,26 @@ class SettingsStore(private val context: Context) {
 
     suspend fun setShowSessionUsageChip(enabled: Boolean) {
         context.dataStore.edit { it[Keys.SHOW_SESSION_USAGE] = enabled.toString() }
+    }
+
+    suspend fun setProfessionalMode(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.PROFESSIONAL] = enabled.toString() }
+    }
+
+    suspend fun setModelId(modelId: String) {
+        context.dataStore.edit { it[Keys.MODEL] = ChatModels.sanitize(modelId) }
+    }
+
+    suspend fun setReasoningEffort(effort: String) {
+        context.dataStore.edit { it[Keys.EFFORT] = ChatModels.sanitizeEffort(effort) }
+    }
+
+    /** 一次写入，避免滑块先闪回旧档位。effort 为 null 时只关思考，保留上次强度。 */
+    suspend fun setThinkingLevel(thinking: Boolean, effort: String?) {
+        context.dataStore.edit {
+            it[Keys.THINKING_DEFAULT] = thinking.toString()
+            if (effort != null) it[Keys.EFFORT] = ChatModels.sanitizeEffort(effort)
+        }
     }
 
     suspend fun setCachedBalance(balance: CachedBalance) {

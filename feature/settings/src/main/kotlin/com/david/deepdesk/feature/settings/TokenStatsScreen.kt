@@ -48,15 +48,13 @@ fun TokenStatsScreen(
             refreshing = refreshing,
             onRefresh = viewModel::refresh,
         )
-        Spacer(Modifier.height(8.dp))
-        SettingsCard {
-            SwitchRow(
-                title = stringResource(UiR.string.show_session_usage),
-                checked = showSessionUsage,
-                onChange = viewModel::setShowSessionUsageChip,
-                subtitle = stringResource(UiR.string.show_session_usage_sub),
-            )
-        }
+        Spacer(Modifier.height(12.dp))
+        SwitchRow(
+            title = stringResource(UiR.string.show_session_usage),
+            checked = showSessionUsage,
+            onChange = viewModel::setShowSessionUsageChip,
+            subtitle = stringResource(UiR.string.show_session_usage_sub),
+        )
         Spacer(Modifier.height(8.dp))
         Text(
             stringResource(UiR.string.daily_usage),

@@ -83,14 +83,14 @@ internal fun ChatMarkdownTable(model: MarkdownComponentModel) {
     }
     TableCard(
         rows = rows,
-        onCopy = { copy(slice) },
+        onCopy = { copy(decodeInlineMath(slice)) },
         onDownload = download,
         onExpand = { expanded = true },
     )
     if (expanded) {
         TableFullscreen(
             rows = rows,
-            onCopy = { copy(slice) },
+            onCopy = { copy(decodeInlineMath(slice)) },
             onDownload = download,
             onDismiss = { expanded = false },
         )
@@ -269,16 +269,28 @@ private fun BorderedTable(rows: List<List<MarkdownTableCell>>, framed: Boolean) 
                                     .padding(horizontal = 14.dp, vertical = 14.dp),
                                 contentAlignment = Alignment.CenterStart,
                             ) {
-                                Text(
-                                    text = cell.text,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontSize = 15.sp,
-                                    lineHeight = 22.sp,
-                                    fontWeight = if (header || cell.bold) FontWeight.SemiBold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    overflow = TextOverflow.Clip,
-                                )
+                                if (cell.text.contains(MATH_START)) {
+                                    InlineMathLine(
+                                        text = cell.text,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 15.sp,
+                                        lineHeight = 22.sp,
+                                        fontWeight = if (header || cell.bold) FontWeight.SemiBold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                    )
+                                } else {
+                                    Text(
+                                        text = cell.text,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        fontSize = 15.sp,
+                                        lineHeight = 22.sp,
+                                        fontWeight = if (header || cell.bold) FontWeight.SemiBold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        overflow = TextOverflow.Clip,
+                                    )
+                                }
                             }
                         }
                     }

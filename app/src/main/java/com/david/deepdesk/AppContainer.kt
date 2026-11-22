@@ -67,6 +67,7 @@ class AppContainer(context: Context) {
         orchestrator = orchestrator,
         filesClient = filesApiClient,
         toolsClient = toolsApiClient,
+        restApi = restApi,
         attachmentManager = attachmentManager,
         recordingController = recordingController,
         asrExecutor = asrExecutor,

@@ -19,7 +19,7 @@ internal fun markdownTableToCsv(markdown: String): String {
     val rows = parseMarkdownTable(markdown)
     return rows.joinToString("\n") { row ->
         row.joinToString(",") { cell ->
-            val escaped = cell.text.replace("\"", "\"\"")
+            val escaped = decodeInlineMath(cell.text).replace("\"", "\"\"")
             if (escaped.any { ch -> ch == ',' || ch == '"' || ch == '\n' }) "\"$escaped\"" else escaped
         }
     }

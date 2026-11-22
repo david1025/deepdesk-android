@@ -20,6 +20,13 @@ data class MessageRequest(
     val title: TitleConfig? = null,
     val stream: Boolean = true,
     @SerialName("max_tokens") val maxTokens: Int? = null,
+    /** Anthropic 推理强度。null 时不出现在 JSON 里，保持非专业模式的原请求。 */
+    @SerialName("output_config") val outputConfig: OutputConfig? = null,
+)
+
+@Serializable
+data class OutputConfig(
+    val effort: String,
 )
 
 @Serializable

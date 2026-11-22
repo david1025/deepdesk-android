@@ -1,14 +1,25 @@
 package com.david.deepdesk.core.ui
 
+import java.util.Base64
+
 /**
  * 把聊天 Markdown 拆成可分别渲染的片段：
- * mermaid 围栏 → 图；`$$`/`$` 公式 → JLatexMath；其余走 Markdown。
- * 代码围栏与行内 code 内的 `$` 不解析为公式。
+ * mermaid 围栏 → 图；`$$` 与 `\[...\]` 独立成块，交给 JLatexMath。
+ * 行内 `$...$` 与 `\(...\)` 换成不透明占位，留在原段落里，避免把句子拆成上下几截。
+ * 代码围栏与行内 code 里的定界符不解析为公式。
  */
+internal const val MATH_START = '\uE000'
+internal const val MATH_END = '\uE001'
+
 sealed interface MarkdownPart {
     data class Markdown(val text: String) : MarkdownPart
     data class Latex(val latex: String, val display: Boolean) : MarkdownPart
     data class Mermaid(val source: String) : MarkdownPart
+}
+
+internal sealed interface MathRun {
+    data class Text(val text: String) : MathRun
+    data class Formula(val latex: String) : MathRun
 }
 
 object MarkdownParts {
@@ -172,7 +183,16 @@ object MarkdownParts {
                 i = end
                 continue
             }
-            if (text.startsWith("$$", i) && (i == 0 || text[i - 1] != '\\')) {
+            if (!escaped(text, i) && text.startsWith("\\[", i)) {
+                val end = text.indexOf("\\]", i + 2)
+                if (end >= 0) {
+                    flush()
+                    parts += MarkdownPart.Latex(text.substring(i + 2, end).trim(), display = true)
+                    i = end + 2
+                    continue
+                }
+            }
+            if (text.startsWith("$$", i) && !escaped(text, i)) {
                 val end = text.indexOf("$$", i + 2)
                 if (end >= 0) {
                     flush()
@@ -181,9 +201,21 @@ object MarkdownParts {
                     continue
                 }
             }
+            if (!escaped(text, i) && text.startsWith("\\(", i)) {
+                val lineEnd = text.indexOf('\n', i).let { if (it < 0) n else it }
+                val end = text.indexOf("\\)", i + 2)
+                if (end in 0 until lineEnd) {
+                    val latex = text.substring(i + 2, end).trim()
+                    if (latex.isNotEmpty()) {
+                        sb.append(encodeInlineMath(latex))
+                        i = end + 2
+                        continue
+                    }
+                }
+            }
             // `$1.50` 是价格，不是公式。跟在美元符号后的数字留在正文里，避免把表格从这里截断。
             if (text[i] == '$' &&
-                (i == 0 || text[i - 1] != '\\') &&
+                !escaped(text, i) &&
                 (i + 1 >= n || text[i + 1] != '$') &&
                 i + 1 < n &&
                 !text[i + 1].isWhitespace() &&
@@ -203,10 +235,12 @@ object MarkdownParts {
                     j++
                 }
                 if (found > i) {
-                    flush()
-                    parts += MarkdownPart.Latex(text.substring(i + 1, found).trim(), display = false)
-                    i = found + 1
-                    continue
+                    val latex = text.substring(i + 1, found).trim()
+                    if (latex.isNotEmpty()) {
+                        sb.append(encodeInlineMath(latex))
+                        i = found + 1
+                        continue
+                    }
                 }
             }
             sb.append(text[i])
@@ -236,3 +270,58 @@ object MarkdownParts {
         return null
     }
 }
+
+private fun escaped(text: String, i: Int) = i > 0 && text[i - 1] == '\\'
+
+/**
+ * 标准 Base64，不用 URL 字母表。下划线在 Markdown 里是强调，会把公式源码拆开。
+ * `A–Z a–z 0–9 + / =` 里没有 `_` 和 `*`。
+ */
+internal fun encodeInlineMath(latex: String): String {
+    val b64 = Base64.getEncoder().encodeToString(latex.toByteArray(Charsets.UTF_8))
+    return "$MATH_START$b64$MATH_END"
+}
+
+internal fun decodeInlineMath(text: String): String {
+    if (!text.contains(MATH_START)) return text
+    return buildString {
+        for (run in splitMathRuns(text)) {
+            when (run) {
+                is MathRun.Text -> append(run.text)
+                is MathRun.Formula -> append('$').append(run.latex).append('$')
+            }
+        }
+    }
+}
+
+internal fun splitMathRuns(text: String): List<MathRun> {
+    if (!text.contains(MATH_START)) return listOf(MathRun.Text(text))
+    val out = mutableListOf<MathRun>()
+    val sb = StringBuilder()
+    var i = 0
+    while (i < text.length) {
+        if (text[i] == MATH_START) {
+            val end = text.indexOf(MATH_END, i + 1)
+            if (end > i) {
+                val latex = decodeB64(text.substring(i + 1, end))
+                if (latex != null) {
+                    if (sb.isNotEmpty()) {
+                        out += MathRun.Text(sb.toString())
+                        sb.clear()
+                    }
+                    out += MathRun.Formula(latex)
+                    i = end + 1
+                    continue
+                }
+            }
+        }
+        sb.append(text[i])
+        i++
+    }
+    if (sb.isNotEmpty()) out += MathRun.Text(sb.toString())
+    return out
+}
+
+private fun decodeB64(b64: String): String? = runCatching {
+    String(Base64.getDecoder().decode(b64), Charsets.UTF_8)
+}.getOrNull()

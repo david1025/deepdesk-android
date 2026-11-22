@@ -4,11 +4,12 @@ import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
@@ -40,19 +42,27 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -70,7 +80,6 @@ import com.david.deepdesk.feature.chat.UiMessage
  * 单条消息渲染：用户靠右气泡、助手靠左全宽（对齐官方 Demo 交互）。
  * 支持长按复制、分享、编辑提问、重新生成、切换分支（F09）。
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun MessageRow(
     item: UiMessage,
@@ -94,7 +103,6 @@ fun MessageRow(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun UserMessageRow(
     item: UiMessage,
@@ -108,7 +116,11 @@ private fun UserMessageRow(
     var showMenu by remember { mutableStateOf(false) }
     val imagePreview = LocalImagePreview.current
     val text = item.blocks.filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }
-    val bubble = if (LocalDeepSeekDark.current) DeepSeekColors.UserBubbleDark else DeepSeekColors.UserBubbleLight
+    val dark = LocalDeepSeekDark.current
+    val bubble = if (dark) DeepSeekColors.UserBubbleDark else DeepSeekColors.UserBubbleLight
+    var expanded by remember(item.message.id, text) { mutableStateOf(false) }
+    var canFold by remember(item.message.id, text) { mutableStateOf(false) }
+    var foldLines by remember(item.message.id, text) { mutableIntStateOf(UserMessageFoldLines) }
 
     val images = item.attachments.filter { it.isPreviewableImage() }
     val files = item.attachments.filterNot { it.isPreviewableImage() }
@@ -126,12 +138,7 @@ private fun UserMessageRow(
             Surface(
                 shape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp),
                 color = bubble,
-                modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = { showMenu = true },
-                    ),
+                modifier = Modifier.widthIn(max = 320.dp),
             ) {
                 Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
                     if (item.message.edited) {
@@ -147,9 +154,37 @@ private fun UserMessageRow(
                             text = text,
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = if (expanded) Int.MAX_VALUE else foldLines,
+                            overflow = TextOverflow.Clip,
+                            onTextLayout = { layout ->
+                                if (expanded) {
+                                    if (layout.lineCount > UserMessageFoldLines) canFold = true
+                                } else {
+                                    val keep = collapsedLineCount(layout, text)
+                                    if (keep < foldLines) foldLines = keep
+                                    if (layout.hasVisualOverflow) canFold = true
+                                }
+                            },
+                            modifier = Modifier.pointerInput(item.message.id) {
+                                detectTapGestures(onLongPress = { showMenu = true })
+                            },
                         )
                     }
+                    if (canFold) {
+                        Spacer(Modifier.height(26.dp))
+                    }
                 }
+            }
+            if (canFold) {
+                UserMessageFoldButton(
+                    expanded = expanded,
+                    dark = dark,
+                    onClick = { expanded = !expanded },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 8.dp, bottom = 6.dp)
+                        .zIndex(2f),
+                )
             }
             DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                 DropdownMenuItem(
@@ -225,6 +260,78 @@ private fun UserMessageRow(
         )
     }
 
+}
+
+/** 官方用户气泡超过这么多行就收起，右下角留展开按钮。 */
+private const val UserMessageFoldLines = 7
+
+/** 收起时丢掉段尾空行，避免比官方多出一行空白。 */
+private fun collapsedLineCount(layout: TextLayoutResult, text: String): Int {
+    val visible = minOf(layout.lineCount, UserMessageFoldLines)
+    if (visible <= 0) return 1
+    var last = visible - 1
+    while (last > 0) {
+        val start = layout.getLineStart(last)
+        val end = layout.getLineEnd(last, visibleEnd = true)
+        if (start < text.length && start < end && text.substring(start, end).isNotBlank()) break
+        last--
+    }
+    return last + 1
+}
+
+@Composable
+private fun UserMessageFoldButton(
+    expanded: Boolean,
+    dark: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val onClickState = rememberUpdatedState(onClick)
+    val color = if (dark) Color(0xFF3A3D46) else Color.White
+    // 点击层不要做 graphicsLayer 旋转。展开后箭头转 180° 时，图层命中会偏掉，点上去没有反应。
+    // 按下在 Initial 阶段消费，避免外层列表把这次点击当成滚动。
+    Box(
+        modifier
+            .size(44.dp)
+            .pointerInput(Unit) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    down.consume()
+                    val up = waitForUpOrCancellation()
+                    if (up != null) {
+                        up.consume()
+                        onClickState.value()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .size(28.dp)
+                .shadow(2.dp, CircleShape)
+                .clip(CircleShape)
+                .background(color),
+            contentAlignment = Alignment.Center,
+        ) {
+            DsIcon(
+                id = UiR.drawable.ic_chevron_down_outline_20,
+                contentDescription = stringResource(if (expanded) UiR.string.collapse else UiR.string.expand),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .size(16.dp)
+                    .drawWithContent {
+                        if (expanded) {
+                            rotate(180f, pivot = center) {
+                                this@drawWithContent.drawContent()
+                            }
+                        } else {
+                            drawContent()
+                        }
+                    },
+            )
+        }
+    }
 }
 
 private fun Attachment.isPreviewableImage(): Boolean {

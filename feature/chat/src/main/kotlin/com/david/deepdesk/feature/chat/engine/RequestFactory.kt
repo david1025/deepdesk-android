@@ -2,10 +2,12 @@ package com.david.deepdesk.feature.chat.engine
 
 import com.david.deepdesk.core.model.ApiMessage
 import com.david.deepdesk.core.model.ChatMessage
+import com.david.deepdesk.core.model.ChatModels
 import com.david.deepdesk.core.model.FileRefBlock
 import com.david.deepdesk.core.model.ImageFileBlock
 import com.david.deepdesk.core.model.ImageFileSource
 import com.david.deepdesk.core.model.MessageRequest
+import com.david.deepdesk.core.model.OutputConfig
 import com.david.deepdesk.core.model.ReplyBlock
 import com.david.deepdesk.core.model.SafetyCheck
 import com.david.deepdesk.core.model.TextBlock
@@ -24,7 +26,7 @@ import kotlinx.serialization.json.encodeToJsonElement
  */
 object RequestFactory {
 
-    const val MODEL = "deepseek-flash"
+    const val MODEL = ChatModels.FLASH
     const val SYSTEM_PROMPT =
         "你是由 DeepSeek 模型提供能力的 AI 助手。本应用是独立第三方客户端。"
 
@@ -34,6 +36,13 @@ object RequestFactory {
         val readUrlEnabled: Boolean,
         /** 第一轮对话为 true（F10 自动标题） */
         val titleEnabled: Boolean,
+        /** 默认 Flash。专业模式才换成用户选的模型。 */
+        val model: String = MODEL,
+        /**
+         * 专业模式且深度思考开启时为 low / high / max。
+         * null 不写 output_config，请求与未开专业模式时一致。
+         */
+        val reasoningEffort: String? = null,
     )
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
@@ -105,8 +114,9 @@ object RequestFactory {
             if (options.readUrlEnabled) add(ToolSpec.READ_URL)
         }
 
+        val effort = options.reasoningEffort?.let(ChatModels::sanitizeEffort)
         return MessageRequest(
-            model = MODEL,
+            model = ChatModels.sanitize(options.model),
             system = SYSTEM_PROMPT,
             messages = messages,
             thinking = if (options.thinkingEnabled) ThinkingConfig.ENABLED else ThinkingConfig.DISABLED,
@@ -114,6 +124,7 @@ object RequestFactory {
             safetyCheck = SafetyCheck.HIGH,
             title = if (options.titleEnabled) TitleConfig(true) else null,
             stream = true,
+            outputConfig = effort?.let { OutputConfig(effort = it) },
         )
     }
 

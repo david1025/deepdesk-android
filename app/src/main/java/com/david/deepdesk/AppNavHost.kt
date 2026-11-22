@@ -157,8 +157,8 @@ fun AppNavHost(container: AppContainer) {
                                     navController.navigate("settings")
                                 },
                                 onNewChat = {
-                                    chatViewModel.newSession()
                                     scope.launch { drawerState.close() }
+                                    if (!chatViewModel.requestNewSession()) return@SessionsDrawer
                                     navController.navigate("chat/new") {
                                         popUpTo("chat/{sessionId}") { inclusive = true }
                                         launchSingleTop = true
@@ -181,7 +181,7 @@ fun AppNavHost(container: AppContainer) {
                                 navController.navigate("settings")
                             },
                             onNewChat = {
-                                chatViewModel.newSession()
+                                if (!chatViewModel.requestNewSession()) return@ChatScreen
                                 navController.navigate("chat/new") {
                                     popUpTo("chat/{sessionId}") { inclusive = true }
                                     launchSingleTop = true
@@ -241,6 +241,7 @@ fun AppNavHost(container: AppContainer) {
                     viewModel = settingsViewModel,
                     usageViewModel = usageViewModel,
                     onBack = { navController.popBackStack() },
+                    onPreviewVoice = chatViewModel::previewVoice,
                     backupSection = {
                         HistoryBackupHost(
                             historyViewModel = historyViewModel,

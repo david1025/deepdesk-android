@@ -19,6 +19,10 @@ data class ModelInfo(
     val id: String? = null,
     val `object`: String? = null,
     val owned_by: String? = null,
+    /** 官方展示名，例如 DeepSeek-V4.1-Flash。原样展示，不改写。 */
+    val name: String? = null,
+    /** 含 image 时表示支持视觉。 */
+    @SerialName("input_modalities") val inputModalities: List<String>? = null,
 )
 
 // ------------------------------ 账户余额 GET /user/balance ------------------------------

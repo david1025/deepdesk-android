@@ -1,9 +1,11 @@
 package com.david.deepdesk.core.ui
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
@@ -24,6 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -36,58 +39,198 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import android.util.Log
+import org.scilab.forge.jlatexmath.TeXConstants
+import org.scilab.forge.jlatexmath.TeXFormula
 import ru.noties.jlatexmath.JLatexMathAndroid
-import ru.noties.jlatexmath.JLatexMathDrawable
+import ru.noties.jlatexmath.awt.AndroidGraphics2D
+import ru.noties.jlatexmath.awt.Color as AwtColor
+import ru.noties.jlatexmath.awt.Insets
 
 @Composable
 internal fun LatexBlock(latex: String, display: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val color = MaterialTheme.colorScheme.onSurface.toArgb()
-    val bitmap = remember(latex, display, color) {
-        if (latex.isBlank()) return@remember null
-        runCatching {
-            JLatexMathAndroid.init(context.applicationContext)
-            val textSize = with(density) { (if (display) 20.sp else 16.sp).toPx() }
-            val drawable = JLatexMathDrawable.builder(latex)
-                .textSize(textSize)
-                .color(color)
-                .padding(if (display) 8 else 2)
-                .align(if (display) JLatexMathDrawable.ALIGN_CENTER else JLatexMathDrawable.ALIGN_LEFT)
-                .build()
-            val w = drawable.intrinsicWidth.coerceAtLeast(1)
-            val h = drawable.intrinsicHeight.coerceAtLeast(1)
-            val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bmp)
-            drawable.setBounds(0, 0, w, h)
-            drawable.draw(canvas)
-            bmp
-        }.getOrNull()
-    }
-    if (bitmap != null) {
-        val imageMod = if (display) {
-            modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-                .horizontalScroll(rememberScrollState())
-        } else {
-            modifier.padding(vertical = 2.dp)
+    val textSize = with(density) { (if (display) 20.sp else 16.sp).toPx() }
+    if (!display) {
+        val bitmap = remember(latex, color, textSize) {
+            renderLatexBitmap(context, latex, textSize, color, paddingPx = 2, display = false)
         }
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = latex,
-            contentScale = ContentScale.Fit,
-            modifier = imageMod,
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = latex,
+                contentScale = ContentScale.Fit,
+                modifier = modifier.padding(vertical = 2.dp),
+            )
+        } else {
+            Text(
+                text = latexFallback(latex, display = false),
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = modifier.padding(vertical = 4.dp),
+            )
+        }
+        return
+    }
+    var widthPx by remember { mutableIntStateOf(0) }
+    val bitmap = remember(latex, color, textSize, widthPx) {
+        if (widthPx <= 0) return@remember null
+        renderLatexBitmap(
+            context = context,
+            latex = latex,
+            textSizePx = textSize,
+            color = color,
+            paddingPx = 8,
+            display = true,
+            maxWidthPx = widthPx,
+        )
+    }
+    val scroll = rememberScrollState()
+    val wider = bitmap != null && widthPx > 0 && bitmap.width > widthPx
+    Box(
+        modifier
+            .fillMaxWidth()
+            .onSizeChanged { widthPx = it.width },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = latex,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .padding(vertical = 8.dp)
+                    .then(if (wider) Modifier.horizontalScroll(scroll) else Modifier),
+            )
+        } else if (widthPx > 0) {
+            Text(
+                text = latexFallback(latex, display = true),
+                style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(vertical = 4.dp),
+            )
+        }
+    }
+}
+
+private val ceCommand = Regex("""\\ce\{([^{}]*)\}""")
+
+/**
+ * 行内公式把 `\displaystyle` 收成 `\textstyle`，避免一个分式把整句撑开。
+ * 绘制仍用 DISPLAY：求和、积分的上下限留在符号上下，和官方一致。
+ * `\ce{H2O}` 这条化学宏 JLatexMath 不认识，换成普通上下标。
+ */
+internal fun normalizeLatex(latex: String, display: Boolean): String {
+    val withoutCe = ceCommand.replace(latex) { match -> ceToLatex(match.groupValues[1]) }
+    return if (display) withoutCe else withoutCe.replace("\\displaystyle", "\\textstyle")
+}
+
+private fun ceToLatex(body: String): String = buildString {
+    var i = 0
+    while (i < body.length) {
+        val ch = body[i]
+        when {
+            ch.isLetter() -> {
+                append("\\mathrm{").append(ch).append('}')
+                i++
+            }
+            ch.isDigit() -> {
+                val start = i
+                while (i < body.length && body[i].isDigit()) i++
+                append("_{").append(body, start, i).append('}')
+            }
+            else -> i++
+        }
+    }
+}
+
+internal fun latexFallback(latex: String, display: Boolean): String {
+    val mark = "\$".repeat(if (display) 2 else 1)
+    return mark + latex + mark
+}
+
+internal fun renderLatexBitmap(
+    context: Context,
+    latex: String,
+    textSizePx: Float,
+    color: Int,
+    paddingPx: Int,
+    display: Boolean,
+    maxWidthPx: Int = 0,
+): Bitmap? {
+    if (latex.isBlank()) return null
+    val prepared = normalizeLatex(latex, display)
+    val rendered = runCatching {
+        drawLatex(context, prepared, textSizePx, color, paddingPx, display, maxWidthPx)
+    }.onFailure { error ->
+        Log.w("DeepDeskLatex", "render failed: ${error.javaClass.simpleName}: ${error.message} :: ${prepared.take(240)}")
+    }.getOrNull()
+    if (rendered != null || !display || maxWidthPx <= 0) return rendered
+    return runCatching {
+        drawLatex(context, prepared, textSizePx, color, paddingPx, display = true, maxWidthPx = 0)
+    }.onFailure { error ->
+        Log.w("DeepDeskLatex", "render retry failed: ${error.javaClass.simpleName}: ${error.message}")
+    }.getOrNull()
+}
+
+private fun drawLatex(
+    context: Context,
+    latex: String,
+    textSizePx: Float,
+    color: Int,
+    paddingPx: Int,
+    display: Boolean,
+    maxWidthPx: Int,
+): Bitmap {
+    JLatexMathAndroid.init(context.applicationContext)
+    val formula = TeXFormula(latex)
+    val style = TeXConstants.STYLE_DISPLAY
+    val innerWidth = maxWidthPx - paddingPx * 2
+    val icon = if (display && innerWidth > textSizePx) {
+        formula.createTeXIcon(
+            style,
+            textSizePx,
+            TeXConstants.UNIT_PIXEL,
+            innerWidth.toFloat(),
+            TeXConstants.ALIGN_CENTER,
+            TeXConstants.UNIT_PIXEL,
+            textSizePx * 0.45f,
         )
     } else {
-        Text(
-            text = if (display) "$$latex$$" else "$$latex$",
-            style = MaterialTheme.typography.bodyMedium.copy(fontFamily = FontFamily.Monospace),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = modifier.padding(vertical = 4.dp),
-        )
+        formula.createTeXIcon(style, textSizePx)
+    }
+    icon.setForeground(AwtColor(color))
+    icon.setInsets(Insets(paddingPx, paddingPx, paddingPx, paddingPx))
+    val w = icon.iconWidth.coerceAtLeast(1)
+    val h = icon.iconHeight.coerceAtLeast(1)
+    val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+    val graphics = SolidGlyphGraphics()
+    graphics.setCanvas(Canvas(bmp))
+    icon.paintIcon(null, graphics, 0, 0)
+    return bmp
+}
+
+/**
+ * `\boxed` 先画矩形，会把画笔留在描边。引擎接着用同一支画笔画字母，
+ * 字形就只剩轮廓。画字母前改回填充。
+ */
+private class SolidGlyphGraphics : AndroidGraphics2D() {
+    override fun drawChars(chars: CharArray, offset: Int, length: Int, x: Int, y: Int) {
+        paintField?.let { field ->
+            (field.get(this) as? Paint)?.style = Paint.Style.FILL
+        }
+        super.drawChars(chars, offset, length, x, y)
+    }
+
+    private companion object {
+        val paintField: java.lang.reflect.Field? = runCatching {
+            AndroidGraphics2D::class.java.getDeclaredField("paint").apply { isAccessible = true }
+        }.getOrNull()
     }
 }
 

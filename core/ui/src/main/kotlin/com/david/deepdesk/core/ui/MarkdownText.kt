@@ -20,16 +20,19 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownBlockQuote
+import com.mikepenz.markdown.compose.elements.MarkdownParagraph
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.markdownDimens
+import org.intellij.markdown.MarkdownTokenTypes
 
 /**
  * 聊天正文 Markdown 渲染（§7.4）：
  * Compose 原生渲染（mikepenz multiplatform-markdown-renderer），覆盖 GFM 基础语法、
- * 代码块、表格；公式走 JLatexMath，Mermaid 走隐藏 WebView 出图。
- * 正文里的链接走 [openHttpUrl]，只允许 http/https。
+ * 代码块、表格。行内公式留在句子里，块级 `$$` / `\[...\]` 单独成图，都走 JLatexMath。
+ * Mermaid 走隐藏 WebView 出图。正文里的链接走 [openHttpUrl]，只允许 http/https。
  */
 @Composable
 fun MarkdownText(
@@ -52,14 +55,37 @@ fun MarkdownText(
         tableCornerSize = 8.dp,
     )
     val components = markdownComponents(
+        paragraph = { model ->
+            if (astSliceContainsMath(model.content, model.node)) {
+                MathMarkdownText(model.content, model.node, model.typography.paragraph)
+            } else {
+                MarkdownParagraph(model.content, model.node, style = model.typography.paragraph)
+            }
+        },
+        heading1 = { model -> MathAwareHeader(model, model.typography.h1, MarkdownTokenTypes.ATX_CONTENT) },
+        heading2 = { model -> MathAwareHeader(model, model.typography.h2, MarkdownTokenTypes.ATX_CONTENT) },
+        heading3 = { model -> MathAwareHeader(model, model.typography.h3, MarkdownTokenTypes.ATX_CONTENT) },
+        heading4 = { model -> MathAwareHeader(model, model.typography.h4, MarkdownTokenTypes.ATX_CONTENT) },
+        heading5 = { model -> MathAwareHeader(model, model.typography.h5, MarkdownTokenTypes.ATX_CONTENT) },
+        heading6 = { model -> MathAwareHeader(model, model.typography.h6, MarkdownTokenTypes.ATX_CONTENT) },
+        setextHeading1 = { model -> MathAwareHeader(model, model.typography.h1, MarkdownTokenTypes.SETEXT_CONTENT) },
+        setextHeading2 = { model -> MathAwareHeader(model, model.typography.h2, MarkdownTokenTypes.SETEXT_CONTENT) },
+        blockQuote = { model ->
+            if (astSliceContainsMath(model.content, model.node)) {
+                MathAwareBlockQuote(model.content, model.node, model.typography.quote)
+            } else {
+                MarkdownBlockQuote(model.content, model.node, model.typography.quote)
+            }
+        },
         unorderedList = { model -> ChatUnorderedList(model) },
         orderedList = { model -> ChatOrderedList(model) },
         table = { model -> ChatMarkdownTable(model) },
     )
     CompositionLocalProvider(LocalUriHandler provides linkHandler) {
-        if (parts.size == 1 && parts[0] is MarkdownPart.Markdown) {
+        val onlyMarkdown = parts.singleOrNull() as? MarkdownPart.Markdown
+        if (onlyMarkdown != null) {
             Markdown(
-                content = content,
+                content = onlyMarkdown.text,
                 typography = typography,
                 dimens = dimens,
                 components = components,

@@ -1,12 +1,15 @@
 package com.david.deepdesk.feature.chat.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,6 +81,7 @@ import com.david.deepdesk.feature.chat.ChatUiState
 import com.david.deepdesk.feature.chat.ChatViewModel
 import com.david.deepdesk.feature.voice.recording.RecordingController
 import com.david.deepdesk.feature.voice.tts.TtsPlayer
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -249,18 +253,33 @@ fun ChatScreen(
                     sessionUsage = ui.sessionUsage,
                     liveUsage = ui.streamingDraft?.usage,
                     showSessionUsage = ui.showSessionUsageChip,
+                    imagesEnabled = ui.imagesEnabled,
+                    pricingModel = if (ui.professionalMode) ui.modelId else com.david.deepdesk.feature.chat.engine.RequestFactory.MODEL,
+                    professionalMode = ui.professionalMode,
+                    modelId = ui.modelId,
+                    reasoningEffort = ui.reasoningEffort,
+                    onSetThinkingLevel = viewModel::setThinkingLevel,
+                    onSetModel = viewModel::setChatModel,
+                    catalogModels = ui.catalogModels,
+                    catalogLoading = ui.catalogLoading,
+                    catalogError = ui.catalogError,
+                    onLoadModels = viewModel::loadCatalogModels,
                     recordingState = recording,
                     onDraftChange = viewModel::onDraftChange,
                     onSend = viewModel::send,
                     onStop = viewModel::stopGeneration,
                     onPickImage = {
-                        pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        if (ui.imagesEnabled) {
+                            pickImage.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        }
                     },
                     onPickFile = { pickFile.launch(arrayOf("*/*")) },
                     onTakePhoto = {
-                        val granted = context.checkSelfPermission(android.Manifest.permission.CAMERA) ==
-                            android.content.pm.PackageManager.PERMISSION_GRANTED
-                        if (granted) launchCamera() else cameraPermission.launch(android.Manifest.permission.CAMERA)
+                        if (ui.imagesEnabled) {
+                            val granted = context.checkSelfPermission(android.Manifest.permission.CAMERA) ==
+                                android.content.pm.PackageManager.PERMISSION_GRANTED
+                            if (granted) launchCamera() else cameraPermission.launch(android.Manifest.permission.CAMERA)
+                        }
                     },
                     onStartRecording = {
                         viewModel.onMicClick(context, hasPermission = true)
@@ -289,7 +308,7 @@ fun ChatScreen(
                     cancelArmed = cancelArmed,
                 )
             }
-            val centerHint = ui.voiceHint ?: copiedHint
+            val centerHint = ui.voiceHint ?: ui.toastHint ?: copiedHint
             centerHint?.let { hint ->
                 CenterHintToast(
                     text = hint,
@@ -304,8 +323,8 @@ fun ChatScreen(
         }
     }
 
-    LaunchedEffect(ui.voiceHint, copiedHint) {
-        if (ui.voiceHint == null && copiedHint == null) return@LaunchedEffect
+    LaunchedEffect(ui.voiceHint, ui.toastHint, copiedHint) {
+        if (ui.voiceHint == null && ui.toastHint == null && copiedHint == null) return@LaunchedEffect
         delay(1600)
         viewModel.dismissVoiceHint()
         copiedHint = null
@@ -409,6 +428,9 @@ private fun MessageList(
     // 贴在底部时，输出变长就继续滚到末尾。手指拖动后松开，只有末尾仍在视口里才继续跟。
     var stickToBottom by remember { mutableStateOf(true) }
     var suppressStickUpdate by remember { mutableIntStateOf(0) }
+    val scrollJob = remember { mutableStateOf<Job?>(null) }
+    var scrollGeneration by remember { mutableIntStateOf(0) }
+    val programmaticScroll = remember { mutableStateOf(false) }
 
     fun atEnd(): Boolean {
         val info = listState.layoutInfo
@@ -418,12 +440,47 @@ private fun MessageList(
             last.offset + last.size <= info.viewportEndOffset + 48
     }
 
+    fun distanceDuration(px: Float): Int = (px / 2.2f).toInt().coerceIn(220, 900)
+
     suspend fun scrollToEnd() {
         val count = listState.layoutInfo.totalItemsCount
         if (count <= 0) return
         suppressStickUpdate++
         listState.scrollToItem(count - 1)
         listState.scroll { scrollBy(1_000_000f) }
+    }
+
+    /** 回到底部按钮：滚到列表末尾。流式跟随仍走 [scrollToEnd]，避免动画和输出抢滚动。 */
+    fun animateToEnd() {
+        val token = ++scrollGeneration
+        programmaticScroll.value = true
+        stickToBottom = true
+        scrollJob.value?.cancel()
+        scrollJob.value = scope.launch {
+            try {
+                val count = listState.layoutInfo.totalItemsCount
+                if (count <= 0) return@launch
+                val info = listState.layoutInfo
+                val tail = info.visibleItemsInfo.lastOrNull()
+                if (tail == null || tail.index != count - 1) {
+                    listState.animateScrollToItem(count - 1)
+                }
+                val after = listState.layoutInfo
+                val last = after.visibleItemsInfo.lastOrNull()
+                if (last != null && last.index == count - 1) {
+                    val extra = (last.offset + last.size - after.viewportEndOffset).toFloat()
+                    if (extra > 1f) {
+                        listState.animateScrollBy(
+                            extra,
+                            tween(durationMillis = distanceDuration(extra), easing = FastOutSlowInEasing),
+                        )
+                    }
+                }
+                if (token == scrollGeneration) stickToBottom = true
+            } finally {
+                if (token == scrollGeneration) programmaticScroll.value = false
+            }
+        }
     }
 
     LaunchedEffect(ui.isStreaming) {
@@ -450,7 +507,7 @@ private fun MessageList(
     }
 
     LaunchedEffect(renderItems.size, draftTick, stickToBottom) {
-        if (emptyHome || !stickToBottom || renderItems.isEmpty()) return@LaunchedEffect
+        if (emptyHome || !stickToBottom || programmaticScroll.value || renderItems.isEmpty()) return@LaunchedEffect
         scrollToEnd()
     }
 
@@ -462,7 +519,7 @@ private fun MessageList(
             val last = info.visibleItemsInfo.lastOrNull()
             info.totalItemsCount to (last?.size ?: 0)
         }.collect {
-            if (stickToBottom && !atEnd()) scrollToEnd()
+            if (stickToBottom && !programmaticScroll.value && !atEnd()) scrollToEnd()
         }
     }
 
@@ -476,6 +533,7 @@ private fun MessageList(
                     return@collect
                 }
                 if (!seenScroll) return@collect
+                if (programmaticScroll.value) return@collect
                 if (suppressStickUpdate > 0) {
                     suppressStickUpdate = 0
                     return@collect
@@ -520,7 +578,10 @@ private fun MessageList(
                                 val dragged = event.changes.any {
                                     it.pressed && it.previousPressed && it.positionChange() != androidx.compose.ui.geometry.Offset.Zero
                                 }
-                                if (dragged) stickToBottom = false
+                                if (dragged) {
+                                    stickToBottom = false
+                                    scrollJob.value?.cancel()
+                                }
                             }
                         }
                     },
@@ -561,10 +622,7 @@ private fun MessageList(
 
             if (!atEnd() && renderItems.isNotEmpty()) {
                 Surface(
-                    onClick = {
-                        stickToBottom = true
-                        scope.launch { scrollToEnd() }
-                    },
+                    onClick = { animateToEnd() },
                     shape = CircleShape,
                     color = MaterialTheme.colorScheme.surface,
                     shadowElevation = 2.dp,

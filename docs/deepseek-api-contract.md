@@ -8,10 +8,11 @@
 - **端点**：`POST https://api.deepseek.com/anthropic/v1/messages`
 - **头**：`x-api-key: <USER_KEY>`、`anthropic-beta: files-api-2025-04-14`（引用 file_id 时必需，本客户端固定携带）、`Accept: text/event-stream`
 - **请求**（`RequestFactory` 统一生成）：
-  - `model`: `deepseek-flash`
+  - `model`: 默认 `deepseek-flash`。设置里的专业模式关闭时固定这个值；开启后从 `GET /models` 列出模型并写入所选 id。展示名用返回的 `name`。`input_modalities` 含 `image` 才支持视觉，否则客户端拒绝图片
   - `system`: 「你是由 DeepSeek 模型提供能力的 AI 助手。本应用是独立第三方客户端。」
   - `messages`: 活跃分支历史 + 新消息。文档附件为 `[{type:"text"},{type:"file",file_id}]`；图片必须是 `{type:"image",source:{type:"file",file_id}}`，不能用顶层 `type:"file"`
   - `thinking`: `{type: enabled|disabled}`（深度思考开关）
+  - `output_config`: 仅专业模式且深度思考开启时发送 `{effort: low|high|max}`。关闭专业模式时不出现该字段
   - `tools`: `deepseek_web_search` / `deepseek_read_url`（按开关与 URL 检测决定）
   - `safety_check`: `{level: "high"}`（强制开启，§8）
   - `title`: `{enabled: true}`（仅第一轮）
@@ -45,6 +46,7 @@
 ## 4. TTS（F12）
 
 - **端点**：`POST /v1/tools/tts`（Bearer），JSON `{text, voice_id: stella|tide, format: "pcm", filter_markdown: true}`。
+- **音色**：公开接口只有 `stella`（海星）和 `tide`（暗潮）。客户端只提供这两项。
 - **响应**：24 kHz / 16-bit / mono 裸 PCM 流式回包；HTTP 200 后中途断开按失败处理（不得宣称完整朗读）。
 - **限制**：单次 ≤10,000 计费字符（汉字 2 字符）——长答案由 `TtsPlayer.segmentText` 分段连续播放。
 - **焦点**：AudioFocusRequest；LOSS/LOSS_TRANSIENT 立即停止；同时最多朗读一条。
@@ -63,7 +65,7 @@
 
 ## 7. 模型验证（F01）
 
-- `GET https://api.deepseek.com/models`（Bearer）→ `{data:[{id,...}]}`；401/402/429 区分提示。
+- `GET https://api.deepseek.com/models`（Bearer）→ `{data:[{id,name,input_modalities,...}]}`。`name` 原样展示；`input_modalities` 含 `image` 即支持视觉。401/402/429 区分提示。
 
 ## 7.1 账户余额与用量
 
