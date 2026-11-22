@@ -21,6 +21,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitLongPressOrCancellation
@@ -116,8 +117,10 @@ import com.david.deepdesk.core.model.UsageInfo
 import com.david.deepdesk.core.model.formatCny
 import com.david.deepdesk.core.model.formatPercent
 import com.david.deepdesk.core.model.formatTokenCount
+import androidx.compose.ui.text.font.FontWeight
 import com.david.deepdesk.core.ui.DeepSeekColors
 import com.david.deepdesk.core.ui.DsIcon
+import com.david.deepdesk.core.ui.LocalDeepSeekDark
 import com.david.deepdesk.core.ui.R as UiR
 import com.david.deepdesk.feature.voice.recording.RecordingController
 import java.io.File
@@ -137,6 +140,9 @@ fun InputBar(
     liveUsage: UsageInfo? = null,
     recordingState: RecordingController.State,
     onDraftChange: (String) -> Unit,
+    editing: Boolean = false,
+    onCancelEdit: () -> Unit = {},
+    editFocusTick: Int = 0,
     onSend: () -> Unit,
     onStop: () -> Unit,
     onPickImage: () -> Unit,
@@ -237,6 +243,9 @@ fun InputBar(
                 canSend = draftText.isNotBlank() || pendingAttachments.any { it.uploadState != UploadState.UPLOADING },
                 attachSheetOpen = attachSheetOpen,
                 onToggleAttachSheet = { attachSheetOpen = !attachSheetOpen },
+                editing = editing,
+                onCancelEdit = onCancelEdit,
+                editFocusTick = editFocusTick,
                 onDraftChange = onDraftChange,
                 onSend = {
                     attachSheetOpen = false
@@ -438,6 +447,53 @@ private fun UsageDialogRow(label: String, value: String) {
 }
 
 @Composable
+private fun EditingInputBanner(onCancel: () -> Unit) {
+    val dark = LocalDeepSeekDark.current
+    val fill = if (dark) Color(0xFF2C2C2E) else Color(0xFFE6E7EE)
+    val button = if (dark) Color(0xFF3A3A3C) else Color.White
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 8.dp, end = 8.dp, top = 8.dp)
+            .height(42.dp)
+            .background(
+                fill,
+                RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 4.dp, bottomEnd = 4.dp),
+            )
+            .padding(start = 14.dp, end = 9.dp),
+    ) {
+        Text(
+            stringResource(UiR.string.modify_input),
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        Box(
+            modifier = Modifier
+                .padding(start = 8.dp)
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(button)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = onCancel,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            DsIcon(
+                UiR.drawable.ic_close_outline_20,
+                contentDescription = stringResource(UiR.string.cancel),
+                modifier = Modifier.size(16.dp),
+            )
+        }
+    }
+}
+
+@Composable
 private fun InputRow(
     draftText: String,
     thinkingEnabled: Boolean,
@@ -459,6 +515,9 @@ private fun InputRow(
     canSend: Boolean,
     attachSheetOpen: Boolean,
     onToggleAttachSheet: () -> Unit,
+    editing: Boolean,
+    onCancelEdit: () -> Unit,
+    editFocusTick: Int,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
@@ -482,6 +541,11 @@ private fun InputRow(
     val haptic = LocalHapticFeedback.current
     val keyboardController = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(editFocusTick) {
+        if (editFocusTick == 0) return@LaunchedEffect
+        runCatching { focusRequester.requestFocus() }
+        keyboardController?.show()
+    }
     val cancelSlopPx = with(LocalDensity.current) { 72.dp.toPx() }
     val latestOnMic by rememberUpdatedState(onMic)
     val latestOnFinish by rememberUpdatedState(onFinishRecording)
@@ -534,7 +598,7 @@ private fun InputRow(
             beginHoldRecording(down)
         }
     }
-    val idleHoldToTalk = !streaming && !fieldFocused && draftText.isEmpty()
+    val idleHoldToTalk = !editing && !streaming && !fieldFocused && draftText.isEmpty()
     val idleHoldModifier = Modifier.pointerInput(cancelSlopPx, idleHoldToTalk) {
         if (!idleHoldToTalk) return@pointerInput
         awaitEachGesture {
@@ -556,6 +620,9 @@ private fun InputRow(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.fillMaxWidth()) {
+            if (editing) {
+                EditingInputBanner(onCancel = onCancelEdit)
+            }
             Column(Modifier.padding(start = 12.dp, end = 8.dp, top = 8.dp)) {
             PendingAttachments(
                 attachments = pendingAttachments,
@@ -567,7 +634,7 @@ private fun InputRow(
             val inputFieldModifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = InputFieldMinHeight)
-            if (voiceMode && !streaming) {
+            if (voiceMode && !streaming && !editing) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = inputFieldModifier.then(holdModifier),

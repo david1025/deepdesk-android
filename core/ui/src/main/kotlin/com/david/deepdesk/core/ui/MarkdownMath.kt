@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mikepenz.markdown.compose.LocalMarkdownAnnotator
 import com.mikepenz.markdown.compose.LocalMarkdownColors
 import com.mikepenz.markdown.compose.LocalMarkdownDimens
 import com.mikepenz.markdown.compose.LocalMarkdownPadding
@@ -53,6 +54,7 @@ import com.mikepenz.markdown.compose.components.MarkdownComponentModel
 import com.mikepenz.markdown.compose.elements.MarkdownBlockQuote
 import com.mikepenz.markdown.compose.elements.MarkdownHeader
 import com.mikepenz.markdown.compose.elements.MarkdownParagraph
+import com.mikepenz.markdown.compose.elements.MarkdownText as LibraryMarkdownText
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.utils.EntityConverter
 import com.mikepenz.markdown.utils.MARKDOWN_TAG_URL
@@ -81,6 +83,8 @@ internal fun MathAwareHeader(
 ) {
     if (astSliceContainsMath(model.content, model.node)) {
         MathMarkdownText(model.content, model.node, style, contentChildType = childType)
+    } else if (LocalRenderedSelection.current != null) {
+        SelectableAstText(model.content, model.node, style, contentChildType = childType)
     } else {
         MarkdownHeader(model.content, model.node, style, childType)
     }
@@ -120,6 +124,8 @@ internal fun MathAwareBlockQuote(content: String, node: ASTNode, style: TextStyl
             val paraMod = Modifier.padding(blockQuoteText)
             if (astSliceContainsMath(content, quote)) {
                 MathMarkdownText(content, quote, style, paraMod)
+            } else if (LocalRenderedSelection.current != null) {
+                SelectableAstText(content, quote, style, paraMod)
             } else {
                 MarkdownParagraph(content, quote, style = style, modifier = paraMod)
             }
@@ -164,7 +170,51 @@ internal fun MathMarkdownText(
         buildMarkdownAnnotatedString(content, child, linkStyle, codeStyle, annotator)
         pop()
     }
-    MathAnnotatedText(styled, style, modifier, maxLines, softWrap)
+    val key = renderedSelectionKey(child)
+    MathAnnotatedText(styled, style, modifier, maxLines, softWrap, selectionKey = key)
+}
+
+/** 没有公式的段落、标题。选中时只在现有字形上铺高亮。 */
+@Composable
+internal fun SelectableAstText(
+    content: String,
+    node: ASTNode,
+    style: TextStyle,
+    modifier: Modifier = Modifier,
+    contentChildType: IElementType? = null,
+) {
+    val child = contentChildType?.let { node.findChildOfType(it) } ?: node
+    val linkStyle = LocalMarkdownTypography.current.linkTextSpanStyle
+    val codeStyle = LocalMarkdownTypography.current.codeSpanStyle
+    val annotator = LocalMarkdownAnnotator.current
+    val styled = buildAnnotatedString {
+        pushStyle(style.toSpanStyle())
+        buildMarkdownAnnotatedString(content, child, linkStyle, codeStyle, annotator)
+        pop()
+    }
+    RenderedMarkdownText(styled, style, modifier, renderedSelectionKey(child))
+}
+
+@Composable
+internal fun RenderedMarkdownText(
+    text: AnnotatedString,
+    style: TextStyle,
+    modifier: Modifier,
+    key: String,
+) {
+    var layout by remember(key) { mutableStateOf<TextLayoutResult?>(null) }
+    LibraryMarkdownText(
+        content = text,
+        modifier = modifier.then(trackRenderedSegment(key, text.text, layout)),
+        style = style,
+        onTextLayout = { layout = it },
+    )
+}
+
+@Composable
+internal fun renderedSelectionKey(node: ASTNode): String {
+    val scope = LocalSelectionScope.current
+    return "$scope:${node.startOffset}:${node.endOffset}"
 }
 
 @Composable
@@ -213,6 +263,7 @@ private fun MathAnnotatedText(
     modifier: Modifier = Modifier,
     maxLines: Int = Int.MAX_VALUE,
     softWrap: Boolean = true,
+    selectionKey: String? = null,
 ) {
     val color = if (style.color == Color.Unspecified) MaterialTheme.colorScheme.onSurface else style.color
     val fontSize = if (style.fontSize == TextUnit.Unspecified) 16.sp else style.fontSize
@@ -252,9 +303,14 @@ private fun MathAnnotatedText(
     } else {
         modifier
     }
+    val tracked = if (selectionKey == null) {
+        clickable
+    } else {
+        clickable.then(trackRenderedSegment(selectionKey, text.text, layout))
+    }
     BasicText(
         text = text,
-        modifier = clickable,
+        modifier = tracked,
         style = style.copy(color = color, fontSize = fontSize),
         onTextLayout = { layout = it },
         overflow = TextOverflow.Clip,

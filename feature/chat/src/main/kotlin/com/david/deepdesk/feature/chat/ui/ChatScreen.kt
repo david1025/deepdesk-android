@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -110,6 +111,22 @@ fun ChatScreen(
     var showRename by remember { mutableStateOf(false) }
     var cancelArmed by remember { mutableStateOf(false) }
     var copiedHint by remember { mutableStateOf<String?>(null) }
+    var editingMessageId by remember { mutableStateOf<String?>(null) }
+    var editFocusTick by remember { mutableIntStateOf(0) }
+
+    fun beginEdit(messageId: String, text: String) {
+        if (ui.isStreaming || text.isBlank()) return
+        editingMessageId = messageId
+        editFocusTick++
+    }
+
+    fun cancelEdit() {
+        editingMessageId = null
+    }
+
+    LaunchedEffect(ui.sessionId) {
+        editingMessageId = null
+    }
 
     LaunchedEffect(sessionId) {
         viewModel.refreshApiKey()
@@ -232,8 +249,7 @@ fun ChatScreen(
                                 ui = ui,
                                 isSpeakingId = (tts as? TtsPlayer.State.Playing)?.messageId,
                                 onRegenerate = viewModel::regenerate,
-                                onEdit = viewModel::editMessage,
-                                onSwitchVersion = { id, delta -> viewModel.switchVersion(id, delta) },
+                                onBeginEdit = ::beginEdit,
                                 onToggleTts = viewModel::toggleTts,
                                 onSaveAnchor = viewModel::saveScrollAnchor,
                                 onCopied = { copiedHint = context.getString(UiR.string.copied) },
@@ -266,7 +282,20 @@ fun ChatScreen(
                     onLoadModels = viewModel::loadCatalogModels,
                     recordingState = recording,
                     onDraftChange = viewModel::onDraftChange,
-                    onSend = viewModel::send,
+                    editing = editingMessageId != null,
+                    onCancelEdit = ::cancelEdit,
+                    editFocusTick = editFocusTick,
+                    onSend = {
+                        val editingId = editingMessageId
+                        if (editingId != null) {
+                            val text = ui.draftText
+                            editingMessageId = null
+                            viewModel.onDraftChange("")
+                            viewModel.editMessage(editingId, text)
+                        } else {
+                            viewModel.send()
+                        }
+                    },
                     onStop = viewModel::stopGeneration,
                     onPickImage = {
                         if (ui.imagesEnabled) {
@@ -414,8 +443,7 @@ private fun MessageList(
     ui: ChatUiState,
     isSpeakingId: String?,
     onRegenerate: (String) -> Unit,
-    onEdit: (String, String) -> Unit,
-    onSwitchVersion: (String, Int) -> Unit,
+    onBeginEdit: (String, String) -> Unit,
     onToggleTts: (String) -> Unit,
     onSaveAnchor: (String?, Int) -> Unit,
     onCopied: () -> Unit,
@@ -483,6 +511,75 @@ private fun MessageList(
         }
     }
 
+    // 展开那一刻的列表位置。收起要回到这里，不能改成把这条消息顶到视口顶。
+    val expandAnchor = remember { HashMap<String, Pair<Int, Int>>() }
+
+    fun restoreExpandScroll(index: Int, offset: Int) {
+        val token = ++scrollGeneration
+        stickToBottom = false
+        programmaticScroll.value = true
+        suppressStickUpdate++
+        scrollJob.value?.cancel()
+        scrollJob.value = scope.launch {
+            try {
+                val count = listState.layoutInfo.totalItemsCount
+                if (count <= 0) return@launch
+                val target = index.coerceIn(0, count - 1)
+                val targetOffset = offset.coerceAtLeast(0)
+                val already = listState.firstVisibleItemIndex == target &&
+                    listState.firstVisibleItemScrollOffset == targetOffset
+                // 高度收起是 300ms。滚动和它一起走，结束后再钉一次，避免高度动画把视口带走。
+                val deadline = System.nanoTime() + 320_000_000L
+                if (!already) {
+                    listState.animateScrollToItem(target, targetOffset)
+                }
+                while (token == scrollGeneration && System.nanoTime() < deadline) {
+                    val n = listState.layoutInfo.totalItemsCount
+                    if (n <= 0) break
+                    val i = target.coerceIn(0, n - 1)
+                    if (
+                        listState.firstVisibleItemIndex != i ||
+                        listState.firstVisibleItemScrollOffset != targetOffset
+                    ) {
+                        listState.scrollToItem(i, targetOffset)
+                    }
+                    withFrameNanos { }
+                }
+                if (token == scrollGeneration) {
+                    val n = listState.layoutInfo.totalItemsCount
+                    if (n > 0) {
+                        val i = target.coerceIn(0, n - 1)
+                        if (
+                            listState.firstVisibleItemIndex != i ||
+                            listState.firstVisibleItemScrollOffset != targetOffset
+                        ) {
+                            listState.scrollToItem(i, targetOffset)
+                        }
+                    }
+                }
+            } finally {
+                if (token == scrollGeneration) {
+                    programmaticScroll.value = false
+                    suppressStickUpdate = 0
+                }
+            }
+        }
+    }
+
+    fun onUserFold(messageId: String, expanding: Boolean) {
+        if (expanding) {
+            expandAnchor[messageId] = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+            stickToBottom = false
+            scrollGeneration++
+            scrollJob.value?.cancel()
+            programmaticScroll.value = false
+            suppressStickUpdate = 0
+        } else {
+            val saved = expandAnchor.remove(messageId) ?: return
+            restoreExpandScroll(saved.first, saved.second)
+        }
+    }
+
     LaunchedEffect(ui.isStreaming) {
         if (ui.isStreaming) stickToBottom = true
     }
@@ -545,6 +642,7 @@ private fun MessageList(
     var userScrolled by remember { mutableStateOf(false) }
     val currentItems by rememberUpdatedState(renderItems)
     val saveAnchor by rememberUpdatedState(onSaveAnchor)
+
     LaunchedEffect(Unit) {
         snapshotFlow { listState.isScrollInProgress }
             .distinctUntilChanged()
@@ -587,7 +685,7 @@ private fun MessageList(
                     },
             ) {
                 item(key = "header") { Spacer(Modifier.height(8.dp)) }
-                items(renderItems, key = { it.id }) { item ->
+                itemsIndexed(renderItems, key = { _, item -> item.id }) { index, item ->
                     Box(Modifier.padding(horizontal = 16.dp)) {
                         when (item) {
                             is RenderItem.Message -> MessageRow(
@@ -595,8 +693,8 @@ private fun MessageList(
                                 streaming = ui.streamingDraft?.assistantMessageId == item.uiMessage.message.id,
                                 isSpeaking = isSpeakingId == item.uiMessage.message.id,
                                 onRegenerate = { onRegenerate(item.uiMessage.message.id) },
-                                onEdit = { newText -> onEdit(item.uiMessage.message.id, newText) },
-                                onSwitchVersion = { delta -> onSwitchVersion(item.uiMessage.message.id, delta) },
+                                onRequestEdit = { text -> onBeginEdit(item.uiMessage.message.id, text) },
+                                onUserFold = { expanding -> onUserFold(item.uiMessage.message.id, expanding) },
                                 onToggleTts = { onToggleTts(item.uiMessage.message.id) },
                                 onCopied = onCopied,
                                 autoCollapseThinking = ui.autoCollapseThinking,

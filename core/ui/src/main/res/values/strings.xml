@@ -14,6 +14,10 @@
     <string name="copied">已复制</string>
     <string name="share">分享</string>
     <string name="edit">编辑</string>
+    <string name="modify">修改</string>
+    <string name="modify_input">修改输入</string>
+    <string name="select_text">选择文本</string>
+    <string name="select_all">全选</string>
     <string name="retry">重试</string>
     <string name="done">完成</string>
     <string name="got_it">知道了</string>

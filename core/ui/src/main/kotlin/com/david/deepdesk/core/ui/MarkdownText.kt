@@ -58,6 +58,8 @@ fun MarkdownText(
         paragraph = { model ->
             if (astSliceContainsMath(model.content, model.node)) {
                 MathMarkdownText(model.content, model.node, model.typography.paragraph)
+            } else if (LocalRenderedSelection.current != null) {
+                SelectableAstText(model.content, model.node, model.typography.paragraph)
             } else {
                 MarkdownParagraph(model.content, model.node, style = model.typography.paragraph)
             }
@@ -81,7 +83,11 @@ fun MarkdownText(
         orderedList = { model -> ChatOrderedList(model) },
         table = { model -> ChatMarkdownTable(model) },
     )
-    CompositionLocalProvider(LocalUriHandler provides linkHandler) {
+    val scopeId = remember { "m${System.identityHashCode(Any())}" }
+    CompositionLocalProvider(
+        LocalUriHandler provides linkHandler,
+        LocalSelectionScope provides scopeId,
+    ) {
         val onlyMarkdown = parts.singleOrNull() as? MarkdownPart.Markdown
         if (onlyMarkdown != null) {
             Markdown(
@@ -93,16 +99,22 @@ fun MarkdownText(
             )
         } else {
             Column(modifier = modifier) {
-                parts.forEach { part ->
-                    when (part) {
-                        is MarkdownPart.Markdown -> Markdown(
-                            content = part.text,
-                            typography = typography,
-                            dimens = dimens,
-                            components = components,
-                        )
-                        is MarkdownPart.Latex -> LatexBlock(part.latex, part.display)
-                        is MarkdownPart.Mermaid -> MermaidBlock(part.source)
+                parts.forEachIndexed { index, part ->
+                    CompositionLocalProvider(LocalSelectionScope provides "$scopeId:$index") {
+                        when (part) {
+                            is MarkdownPart.Markdown -> Markdown(
+                                content = part.text,
+                                typography = typography,
+                                dimens = dimens,
+                                components = components,
+                            )
+                            is MarkdownPart.Latex -> LatexBlock(
+                                latex = part.latex,
+                                display = part.display,
+                                modifier = trackRenderedSegment("$scopeId:$index:math", part.latex, null),
+                            )
+                            is MarkdownPart.Mermaid -> MermaidBlock(part.source)
+                        }
                     }
                 }
             }

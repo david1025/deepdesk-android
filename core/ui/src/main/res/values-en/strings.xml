@@ -14,6 +14,10 @@
     <string name="copied">Copied</string>
     <string name="share">Share</string>
     <string name="edit">Edit</string>
+    <string name="modify">Edit</string>
+    <string name="modify_input">Edit message</string>
+    <string name="select_text">Select text</string>
+    <string name="select_all">Select all</string>
     <string name="retry">Retry</string>
     <string name="done">Done</string>
     <string name="got_it">OK</string>
