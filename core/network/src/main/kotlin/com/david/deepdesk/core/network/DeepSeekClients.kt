@@ -35,7 +35,7 @@ class AuthInterceptor(private val keyProvider: ApiKeyProvider) : okhttp3.Interce
 
     companion object {
         const val FILES_API_BETA = "files-api-2025-04-14"
-        const val USER_AGENT = "DeepSeekNativeAndroid/1.2.0 (third-party BYOK client)"
+        const val USER_AGENT = "DeepSeekNativeAndroid/1.2.1 (third-party BYOK client)"
     }
 }
 

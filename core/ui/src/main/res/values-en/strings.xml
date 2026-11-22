@@ -2,8 +2,8 @@
 <resources>
     <string name="brand_name">DeepDesk</string>
     <string name="brand_subtitle">Third-party client</string>
-    <string name="app_version">v1.2.0</string>
-    <string name="app_version_short">1.2.0</string>
+    <string name="app_version">v1.2.1</string>
+    <string name="app_version_short">1.2.1</string>
 
     <string name="settings">Settings</string>
     <string name="back">Back</string>
@@ -268,4 +268,5 @@
     <string name="read_aloud">Read aloud</string>
     <string name="content_refused">This reply could not be generated due to the content safety policy.</string>
     <string name="share_chooser">Share</string>
+    <string name="previous_version">Previous version</string>
 </resources>

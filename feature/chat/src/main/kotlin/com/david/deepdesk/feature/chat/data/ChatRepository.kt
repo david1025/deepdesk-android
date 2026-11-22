@@ -241,7 +241,9 @@ class ChatRepository(
     suspend fun selectChild(parentId: String?, childId: String, sessionId: String) {
         db.withTransaction {
             parentId?.let { messageDao.updateSelectedChild(it, childId) }
-            conversationDao.updateActiveMessage(sessionId, childId, time.nowMillis())
+            val messages = messageDao.getBySession(sessionId)
+            val leafId = selectedBranchLeaf(messages, childId) ?: return@withTransaction
+            conversationDao.updateActiveMessage(sessionId, leafId, time.nowMillis())
         }
     }
 
@@ -431,4 +433,21 @@ class ChatRepository(
     companion object {
         const val MAX_PINNED = 10
     }
+}
+
+/** Follow the saved choice at each fork, falling back to the newest child. */
+internal fun selectedBranchLeaf(messages: List<MessageEntity>, childId: String): String? {
+    val byId = messages.associateBy { it.id }
+    val childrenByParent = messages.groupBy { it.parentId }
+    var current = byId[childId] ?: return null
+    val seen = mutableSetOf<String>()
+    while (seen.add(current.id)) {
+        val children = childrenByParent[current.id].orEmpty()
+        val next = children.firstOrNull { it.id == current.selectedChildId }
+            ?: children.lastOrNull()
+            ?: break
+        if (next.id in seen) break
+        current = next
+    }
+    return current.id
 }

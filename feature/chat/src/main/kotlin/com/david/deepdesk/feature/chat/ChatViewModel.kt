@@ -305,8 +305,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
     ): List<UiMessage> {
         val attachmentsByMessage = attachments.groupBy { it.messageId }
         // 版本信息：同一父节点下同角色的兄弟数量与当前下标
-        val allById = data.roots.associate { it.message.id to it }
-        val allNodes = data.roots + data.roots.flatMap { collectDescendants(it) }
+        val allNodes = data.roots
         val siblingsByParent = allNodes.groupBy { it.message.parentId }
 
         fun versionInfo(msg: ChatMessage): Pair<Int, Int> {
@@ -734,7 +733,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 ?: return@launch
 
             val (pathBefore, _) = services.repository.activePathWithBlocks(sessionId)
-            val historyBefore = pathBefore.filter { it.id != userMessageId }
+            val historyBefore = pathBefore.takeWhile { it.id != userMessageId }
             if (rejectImages(attachmentsByMessage(sessionId, historyBefore).imageFileIds)) return@launch
 
             val newUser = ChatMessage(
@@ -781,7 +780,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
         if (services.orchestrator.isGenerating(sessionId)) return
         viewModelScope.launch(Dispatchers.IO) {
             val data = services.repository.loadSession(sessionId) ?: return@launch
-            val all = data.roots + data.roots.flatMap { collectDescendants(it) }
+            val all = data.roots
             val node = all.firstOrNull { it.message.id == messageId } ?: return@launch
             val siblings = siblingsByParent(all, node.message.parentId, node.message.role)
             if (siblings.size <= 1) return@launch

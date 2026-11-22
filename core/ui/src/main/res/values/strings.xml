@@ -2,8 +2,8 @@
 <resources>
     <string name="brand_name">DeepDesk</string>
     <string name="brand_subtitle">第三方客户端</string>
-    <string name="app_version">v1.2.0</string>
-    <string name="app_version_short">1.2.0</string>
+    <string name="app_version">v1.2.1</string>
+    <string name="app_version_short">1.2.1</string>
 
     <string name="settings">设置</string>
     <string name="back">返回</string>
@@ -268,4 +268,5 @@
     <string name="read_aloud">朗读</string>
     <string name="content_refused">根据内容安全政策，该内容无法生成回复。</string>
     <string name="share_chooser">分享</string>
+    <string name="previous_version">上一版本</string>
 </resources>

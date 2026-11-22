@@ -106,6 +106,8 @@ fun MessageRow(
     streaming: Boolean,
     isSpeaking: Boolean,
     onRegenerate: () -> Unit,
+    onSwitchVersion: (Int) -> Unit,
+    versionsEnabled: Boolean,
     onRequestEdit: (String) -> Unit,
     onToggleTts: () -> Unit,
     onCopied: () -> Unit = {},
@@ -114,7 +116,7 @@ fun MessageRow(
     onUserFold: (Boolean) -> Unit = {},
 ) {
     if (item.message.role == "user") {
-        UserMessageRow(item, onRequestEdit, onCopied, onUserFold)
+        UserMessageRow(item, onRequestEdit, onCopied, onUserFold, onSwitchVersion, !versionsEnabled)
     } else {
         AssistantMessageRow(
             item, streaming, isSpeaking, onRegenerate, onToggleTts, onCopied,
@@ -129,6 +131,8 @@ private fun UserMessageRow(
     onRequestEdit: (String) -> Unit,
     onCopied: () -> Unit,
     onFold: (Boolean) -> Unit,
+    onSwitchVersion: (Int) -> Unit,
+    streaming: Boolean,
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -406,6 +410,29 @@ private fun UserMessageRow(
                     actions = actions,
                     onDismiss = { showMenu = false },
                 )
+            }
+        }
+        if (item.versionCount > 1) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.IconButton(
+                    onClick = { onSwitchVersion(-1) },
+                    enabled = !streaming && item.versionIndex > 0,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    DsIcon(UiR.drawable.ic_chevron_left_outline_20, contentDescription = stringResource(UiR.string.previous_version))
+                }
+                Text(
+                    "${item.versionIndex + 1} / ${item.versionCount}",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                androidx.compose.material3.IconButton(
+                    onClick = { onSwitchVersion(1) },
+                    enabled = !streaming && item.versionIndex < item.versionCount - 1,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    DsIcon(UiR.drawable.ic_chevron_right_outline_20, contentDescription = stringResource(UiR.string.next_version))
+                }
             }
         }
     }
