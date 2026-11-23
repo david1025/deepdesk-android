@@ -754,7 +754,7 @@ private sealed interface RenderItem {
     }
 
     data class Stream(val draft: com.david.deepdesk.feature.chat.engine.ChatOrchestrator.DraftUi) : RenderItem {
-        override val id: String get() = "stream_${draft.assistantMessageId}"
+        override val id: String get() = draft.assistantMessageId
     }
 }
 

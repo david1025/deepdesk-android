@@ -23,6 +23,7 @@ import com.david.deepdesk.core.network.DeepSeekApiException
 import com.david.deepdesk.core.ui.R as UiR
 import com.david.deepdesk.feature.voice.recording.RecordingController
 import com.david.deepdesk.feature.voice.tts.TtsPlayer
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -33,6 +34,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -111,29 +113,43 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
 
     private var draftSaveJob: Job? = null
     private var asrJob: Job? = null
-    private var hadStreamingDraft = false
     private val sessionMutex = Mutex()
+    private val reloadMutex = Mutex()
+    private val sendMutex = Mutex()
 
     init {
         // 生成中的草稿 → UI（生成任务独立于 Composable 生命周期，flatMapLatest 防止收集器泄漏）
         viewModelScope.launch {
+            var previousDraft: ChatOrchestrator.DraftUi? = null
             services.orchestrator.running.flatMapLatest { running ->
                 if (running == null) flowOf(null)
                 else running.draft.map { it }
             }.collect { draft ->
-                val forThisSession = draft != null && draft.sessionId == _ui.value.sessionId
-                _ui.value = _ui.value.copy(
-                    streamingDraft = if (forThisSession) draft else null
-                )
-                // 生成结束：重新加载以获得最终状态与标题
-                if (hadStreamingDraft && draft == null) {
-                    reloadMessages()
-                    if (_ui.value.autoReadEnabled) readLastAssistant()
+                val finished = previousDraft?.takeIf { draft == null }
+                previousDraft = draft
+                if (finished != null) {
+                    // 保留流式回复，直到最终消息可以在同一次界面更新中替换它。
+                    if (_ui.value.sessionId == finished.sessionId) {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                refreshMessages(finished.sessionId, finished.assistantMessageId)
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            AppLog.e(TAG, "刷新生成结果失败", e)
+                        }
+                        clearStreamingDraft(finished.assistantMessageId)
+                        readLastAssistant(finished)
+                    }
                     viewModelScope.launch(Dispatchers.IO) {
                         runCatching { services.balanceRepository.refresh() }
                     }
+                } else {
+                    _ui.update { state ->
+                        state.copy(streamingDraft = draft?.takeIf { it.sessionId == state.sessionId })
+                    }
                 }
-                hadStreamingDraft = draft != null
             }
         }
         // 录音状态观察：Processing → ASR；Recognized → 回填并发送（松手发送）
@@ -160,18 +176,20 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
         // 深度思考 / 智能搜索等偏好：持续收集，冷启动与设置页改动都会同步到输入条
         viewModelScope.launch {
             services.settingsStore.settings.collect { settings ->
-                _ui.value = _ui.value.copy(
-                    thinkingEnabled = settings.thinkingEnabledByDefault,
-                    webSearchEnabled = settings.webSearchEnabledByDefault,
-                    ttsVoiceId = settings.voiceId,
-                    autoReadEnabled = settings.autoReadEnabled,
-                    autoCollapseThinking = settings.autoCollapseThinking,
-                    showSessionUsageChip = settings.showSessionUsageChip,
-                    professionalMode = settings.professionalMode,
-                    modelId = settings.modelId,
-                    reasoningEffort = settings.reasoningEffort,
-                    hasApiKey = services.hasApiKey(),
-                )
+                _ui.update { state ->
+                    state.copy(
+                        thinkingEnabled = settings.thinkingEnabledByDefault,
+                        webSearchEnabled = settings.webSearchEnabledByDefault,
+                        ttsVoiceId = settings.voiceId,
+                        autoReadEnabled = settings.autoReadEnabled,
+                        autoCollapseThinking = settings.autoCollapseThinking,
+                        showSessionUsageChip = settings.showSessionUsageChip,
+                        professionalMode = settings.professionalMode,
+                        modelId = settings.modelId,
+                        reasoningEffort = settings.reasoningEffort,
+                        hasApiKey = services.hasApiKey(),
+                    )
+                }
             }
         }
         viewModelScope.launch {
@@ -179,7 +197,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 if (id.isNullOrBlank()) flowOf(TokenUsageTotals())
                 else services.repository.observeSessionUsage(id)
             }.collect { usage ->
-                _ui.value = _ui.value.copy(sessionUsage = usage)
+                _ui.update { it.copy(sessionUsage = usage) }
             }
         }
     }
@@ -270,7 +288,6 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
         // 写回刚清空的新会话，表现为「点了新建但内容又回来了」。
         if (_ui.value.isStreaming) services.orchestrator.stopGeneration()
         val prev = _ui.value
-        hadStreamingDraft = false
         val emptySessionId = prev.sessionId.takeIf {
             prev.messages.isEmpty() && !prev.isStreaming
         }
@@ -336,19 +353,32 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
     private fun reloadMessages() {
         val sessionId = _ui.value.sessionId ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            val data = services.repository.loadSession(sessionId) ?: return@launch
-            val attachments = services.repository.getAttachments(sessionId)
-            _ui.value = _ui.value.copy(
+            refreshMessages(sessionId)
+        }
+    }
+
+    private suspend fun refreshMessages(sessionId: String, finishedMessageId: String? = null) = reloadMutex.withLock {
+        val data = services.repository.loadSession(sessionId) ?: return@withLock
+        val messages = toUiMessages(data, services.repository.getAttachments(sessionId))
+        _ui.update { state ->
+            if (state.sessionId != sessionId) state else state.copy(
                 conversationTitle = data.conversation.title.ifBlank { str(UiR.string.new_chat) },
-                messages = toUiMessages(data, attachments),
+                messages = messages,
+                streamingDraft = state.streamingDraft?.takeUnless { it.assistantMessageId == finishedMessageId },
             )
+        }
+    }
+
+    private fun clearStreamingDraft(messageId: String) {
+        _ui.update { state ->
+            if (state.streamingDraft?.assistantMessageId == messageId) state.copy(streamingDraft = null) else state
         }
     }
 
     // ------------------------------ 输入与草稿 ------------------------------
 
     fun onDraftChange(text: String) {
-        _ui.value = _ui.value.copy(draftText = text)
+        _ui.update { it.copy(draftText = text) }
         val sessionId = _ui.value.sessionId ?: return
         draftSaveJob?.cancel()
         draftSaveJob = viewModelScope.launch(Dispatchers.IO) {
@@ -462,12 +492,15 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             _ui.value = state.copy(error = AppError(AppError.Kind.AUTH, str(UiR.string.need_api_key)))
             return
         }
-        if (state.isStreaming) return
-
         viewModelScope.launch(Dispatchers.IO) {
+            if (!sendMutex.tryLock()) return@launch
+            var sendingSessionId = state.sessionId
             try {
+                if (_ui.value.sessionId != state.sessionId) return@launch
+                check(services.orchestrator.running.value == null) { "已有生成任务进行中" }
                 // 首条消息或附件：先创建会话
-                val sessionId = ensureSessionId()
+                val sessionId = state.sessionId ?: ensureSessionId()
+                sendingSessionId = sessionId
                 if (state.pendingAttachments.any { it.isImage } && !state.imagesEnabled) {
                     _ui.value = _ui.value.copy(error = AppError(AppError.Kind.LOCAL, str(UiR.string.model_no_vision)))
                     return@launch
@@ -496,12 +529,12 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                 val now = services.time.nowMillis()
 
                 // 2. 插入用户消息（含文本块）
-                val isFirstTurn = state.messages.isEmpty()
+                val isFirstTurn = existingPath.isEmpty()
                 val userMessage = ChatMessage(
                     id = services.time.newId(),
                     sessionId = sessionId,
                     role = "user",
-                    parentId = state.messages.lastOrNull()?.message?.id,
+                    parentId = existingPath.lastOrNull()?.id,
                     createdAt = now,
                 )
                 val userBlocks = if (text.isNotBlank()) listOf<ReplyBlock>(ReplyBlock.Text(text)) else emptyList()
@@ -510,15 +543,33 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                     state.pendingAttachments.map { it.id },
                     userMessage.id,
                 )
-                services.repository.saveDraft(sessionId, "")
+                val current = _ui.value
+                if (current.sessionId != sessionId || current.draftText == state.draftText) {
+                    services.repository.saveDraft(sessionId, "")
+                }
 
-                // 3. 组装请求：活跃路径（不含刚插入的用户消息）+ 新消息内容
-                val (path, blocks) = services.repository.activePathWithBlocks(sessionId)
-                val history = path.dropLast(1)
-                val refs = attachmentsByMessage(sessionId, history)
+                // 3. 用同一次会话读取更新列表并组装请求，避免长对话重复加载。
+                val sentAttachmentIds = state.pendingAttachments.map { it.id }.toSet()
+                val (data, attachments) = reloadMutex.withLock {
+                    val data = checkNotNull(services.repository.loadSession(sessionId))
+                    val attachments = services.repository.getAttachments(sessionId)
+                    val messages = toUiMessages(data, attachments)
+                    _ui.update { currentState ->
+                        if (currentState.sessionId != sessionId) currentState else currentState.copy(
+                            messages = messages,
+                            draftText = currentState.draftText.takeUnless { it == state.draftText }.orEmpty(),
+                            pendingAttachments = currentState.pendingAttachments.filterNot { it.id in sentAttachmentIds },
+                            error = null,
+                            retryableMessageId = null,
+                        )
+                    }
+                    data to attachments
+                }
+                val history = data.activePath.takeWhile { it.id != userMessage.id }
+                val refs = attachmentRefs(attachments, history)
                 val request = RequestFactory.build(
                     history = history,
-                    blocksByMessageId = blocks,
+                    blocksByMessageId = data.blocksByMessageId,
                     attachmentsByMessageId = refs.byMessage,
                     newMessageText = text,
                     newMessageFileIds = uploadedIds,
@@ -531,14 +582,6 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                     ),
                 )
 
-                _ui.value = _ui.value.copy(
-                    draftText = "",
-                    pendingAttachments = emptyList(),
-                    error = null,
-                    retryableMessageId = null,
-                )
-                reloadMessages()
-
                 services.orchestrator.generate(
                     sessionId = sessionId,
                     parentMessageId = userMessage.id,
@@ -546,10 +589,17 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                     model = currentModel(),
                     thinkingEnabled = state.thinkingEnabled,
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _ui.value = _ui.value.copy(
-                    error = AttachmentManager.toAppError(e).let { if (it.kind == AppError.Kind.UNKNOWN) AppError(AppError.Kind.LOCAL, "发送失败：${e.message}") else it }
-                )
+                val error = AttachmentManager.toAppError(e)
+                _ui.update {
+                    if (it.sessionId != sendingSessionId) it else it.copy(
+                        error = if (error.kind == AppError.Kind.UNKNOWN) AppError(AppError.Kind.LOCAL, "发送失败：${e.message}") else error,
+                    )
+                }
+            } finally {
+                sendMutex.unlock()
             }
         }
     }
@@ -560,13 +610,16 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
     )
 
     /** 一次会话级查询得到“消息 → 已上传 file_id 列表”，并标出哪些是图片。 */
-    private suspend fun attachmentsByMessage(sessionId: String, history: List<ChatMessage>): AttachmentRefs {
+    private suspend fun attachmentsByMessage(sessionId: String, history: List<ChatMessage>): AttachmentRefs =
+        attachmentRefs(services.repository.getAttachments(sessionId), history)
+
+    private fun attachmentRefs(attachments: List<Attachment>, history: List<ChatMessage>): AttachmentRefs {
         val historyIds = history.map { it.id }.toSet()
-        val attachments = services.repository.getAttachments(sessionId)
+        val included = attachments
             .filter { it.messageId != null && it.serverFileId != null && it.messageId in historyIds }
         return AttachmentRefs(
-            byMessage = attachments.groupBy({ it.messageId!! }, { it.serverFileId!! }),
-            imageFileIds = attachments.filter { it.isImage }.mapNotNull { it.serverFileId }.toSet(),
+            byMessage = included.groupBy({ it.messageId!! }, { it.serverFileId!! }),
+            imageFileIds = included.filter { it.isImage }.mapNotNull { it.serverFileId }.toSet(),
         )
     }
 
@@ -956,17 +1009,14 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
         }
     }
 
-    /** 生成完成后自动朗读最后一条助手回答（§3.5）：直接查库，避免与异步 reloadMessages 竞态 */
-    private fun readLastAssistant() {
-        val sessionId = _ui.value.sessionId ?: return
-        viewModelScope.launch(Dispatchers.IO) {
-            val data = services.repository.loadSession(sessionId) ?: return@launch
-            val last = data.activePath.lastOrNull { it.role == "assistant" } ?: return@launch
-            val text = data.blocksByMessageId[last.id].orEmpty()
-                .filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }
-            if (text.isNotBlank()) {
-                services.ttsPlayer.play(last.id, text, _ui.value.ttsVoiceId)
-            }
+    /** 生成完成后自动朗读刚载入的最终回复（§3.5）。 */
+    private fun readLastAssistant(finished: ChatOrchestrator.DraftUi) {
+        val state = _ui.value
+        if (!state.autoReadEnabled || state.sessionId != finished.sessionId) return
+        val reply = state.messages.firstOrNull { it.message.id == finished.assistantMessageId } ?: return
+        val text = reply.blocks.filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }
+        if (text.isNotBlank()) {
+            services.ttsPlayer.play(reply.message.id, text, state.ttsVoiceId)
         }
     }
 

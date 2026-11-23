@@ -165,10 +165,12 @@ class ChatRepository(
         return path
     }
 
-    /** 加载会话全部消息 + 块；空会话返回 null */
+    /** 加载会话全部消息和块；会话不存在时返回 null。 */
     suspend fun loadSession(sessionId: String): SessionData? {
-        val conversation = conversationDao.get(sessionId) ?: return null
-        val rows = messageDao.getBySessionWithBlocks(sessionId)
+        val (conversation, rows) = db.withTransaction {
+            val conversation = conversationDao.get(sessionId) ?: return@withTransaction null
+            conversation to messageDao.getBySessionWithBlocks(sessionId)
+        } ?: return null
         val nodes = rows.map { row ->
             Node(
                 ChatMessage(
