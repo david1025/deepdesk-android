@@ -1,5 +1,6 @@
 package com.david.deepdesk.feature.chat
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.david.deepdesk.core.common.AppError
@@ -16,9 +17,13 @@ import com.david.deepdesk.core.model.TokenUsageTotals
 import com.david.deepdesk.core.model.UploadState
 import com.david.deepdesk.feature.attachments.AttachmentManager
 import com.david.deepdesk.feature.attachments.AttachmentTypeResolver
+import com.david.deepdesk.feature.attachments.ImageCrop
 import com.david.deepdesk.feature.chat.data.ChatRepository
 import com.david.deepdesk.feature.chat.engine.ChatOrchestrator
+import com.david.deepdesk.feature.chat.engine.ChatRequestLimit
+import com.david.deepdesk.feature.chat.engine.MAX_DOCUMENT_REFERENCES
 import com.david.deepdesk.feature.chat.engine.RequestFactory
+import com.david.deepdesk.feature.chat.engine.WebToolHistory
 import com.david.deepdesk.core.network.DeepSeekApiException
 import com.david.deepdesk.core.ui.R as UiR
 import com.david.deepdesk.feature.voice.recording.RecordingController
@@ -27,7 +32,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -339,7 +346,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             val (count, index) = versionInfo(msg)
             UiMessage(
                 message = msg,
-                blocks = data.blocksByMessageId[msg.id].orEmpty(),
+                blocks = WebToolHistory.displayBlocks(data.blocksByMessageId[msg.id].orEmpty()),
                 versionCount = count,
                 versionIndex = index,
                 attachments = attachmentsByMessage[msg.id].orEmpty(),
@@ -506,7 +513,9 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
                     return@launch
                 }
                 val (existingPath, _) = services.repository.activePathWithBlocks(sessionId)
-                if (rejectImages(attachmentsByMessage(sessionId, existingPath).imageFileIds)) return@launch
+                val existingRefs = attachmentsByMessage(sessionId, existingPath)
+                if (rejectDocuments(existingRefs, state.pendingAttachments.count { !it.isImage })) return@launch
+                if (rejectImages(existingRefs.imageFileIds)) return@launch
                 // 1. 上传附件（未 UPLOADED 的失败附件不入请求）
                 val uploadedIds = mutableListOf<String>()
                 val newImageIds = mutableSetOf<String>()
@@ -607,14 +616,29 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
     private data class AttachmentRefs(
         val byMessage: Map<String, List<String>>,
         val imageFileIds: Set<String>,
-    )
+    ) {
+        val documentCount: Int
+            get() = byMessage.values.sumOf { ids -> ids.count { it !in imageFileIds } }
+    }
+
+    private fun rejectDocuments(refs: AttachmentRefs, newDocuments: Int = 0): Boolean {
+        val count = refs.documentCount + newDocuments
+        if (count <= MAX_DOCUMENT_REFERENCES) return false
+        val canStartOver = refs.documentCount > 0 && newDocuments <= MAX_DOCUMENT_REFERENCES
+        val error = AppError(
+            if (canStartOver) AppError.Kind.CONTEXT_LIMIT else AppError.Kind.LOCAL,
+            services.appContext.getString(UiR.string.document_reference_limit, MAX_DOCUMENT_REFERENCES, count),
+        )
+        _ui.update { it.copy(error = error) }
+        return true
+    }
 
     /** 一次会话级查询得到“消息 → 已上传 file_id 列表”，并标出哪些是图片。 */
     private suspend fun attachmentsByMessage(sessionId: String, history: List<ChatMessage>): AttachmentRefs =
         attachmentRefs(services.repository.getAttachments(sessionId), history)
 
     private fun attachmentRefs(attachments: List<Attachment>, history: List<ChatMessage>): AttachmentRefs {
-        val historyIds = history.map { it.id }.toSet()
+        val historyIds = history.filter { it.role == "user" }.map { it.id }.toSet()
         val included = attachments
             .filter { it.messageId != null && it.serverFileId != null && it.messageId in historyIds }
         return AttachmentRefs(
@@ -684,32 +708,72 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
 
             // 历史截断到父消息（含），不追加新用户消息
             val history = if (parentId == null) emptyList() else {
-                path.takeWhile { it.id != parentId } + path.firstOrNull { it.id == parentId }!!
+                val parentIndex = path.indexOfFirst { it.id == parentId }
+                if (parentIndex < 0) return@launch
+                path.take(parentIndex + 1)
             }
             val attByMsg = attachmentsByMessage(sessionId, history)
-            if (rejectImages(attByMsg.imageFileIds)) return@launch
-            val request = RequestFactory.build(
-                history = history,
-                blocksByMessageId = blocks,
-                attachmentsByMessageId = attByMsg.byMessage,
-                imageFileIds = attByMsg.imageFileIds,
-                newMessageText = "",
-                newMessageFileIds = emptyList(),
-                options = currentOptions(
+            if (rejectDocuments(attByMsg) || rejectImages(attByMsg.imageFileIds)) return@launch
+            val needsRepair = data.blocksByMessageId[assistantMessageId].orEmpty()
+                .any { ChatRequestLimit.fromBlock(it) == ChatRequestLimit.FILE_UNAVAILABLE }
+            if (!sendMutex.tryLock()) return@launch
+            try {
+                if (_ui.value.sessionId != sessionId || services.orchestrator.running.value != null) return@launch
+                val refs = if (needsRepair) {
+                    repairFiles(sessionId, attByMsg.byMessage.values.flatten().toSet())
+                    attachmentsByMessage(sessionId, history)
+                } else {
+                    attByMsg
+                }
+                if (_ui.value.sessionId != sessionId || services.orchestrator.running.value != null) return@launch
+                val webSearchEnabled = _ui.value.webSearchEnabled
+                val request = RequestFactory.build(
+                    history = history,
+                    blocksByMessageId = blocks,
+                    attachmentsByMessageId = refs.byMessage,
+                    imageFileIds = refs.imageFileIds,
+                    newMessageText = "",
+                    newMessageFileIds = emptyList(),
+                    options = currentOptions(
+                        thinkingEnabled = _ui.value.thinkingEnabled,
+                        webSearchEnabled = webSearchEnabled,
+                        readUrlEnabled = webSearchEnabled || RequestFactory.lastUserMessageContainsUrl(history, blocks),
+                        titleEnabled = false,
+                    ),
+                    appendUserMessage = false,
+                )
+                services.orchestrator.generate(
+                    sessionId = sessionId,
+                    parentMessageId = parentId,
+                    request = request,
+                    model = currentModel(),
                     thinkingEnabled = _ui.value.thinkingEnabled,
-                    webSearchEnabled = _ui.value.webSearchEnabled,
-                    readUrlEnabled = _ui.value.webSearchEnabled,
-                    titleEnabled = false,
-                ),
-                appendUserMessage = false,
-            )
-            services.orchestrator.generate(
-                sessionId = sessionId,
-                parentMessageId = parentId,
-                request = request,
-                model = currentModel(),
-                thinkingEnabled = _ui.value.thinkingEnabled,
-            )
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _ui.update { state ->
+                    if (state.sessionId != sessionId) state else state.copy(error = AttachmentManager.toAppError(e))
+                }
+            } finally {
+                sendMutex.unlock()
+            }
+        }
+    }
+
+    private suspend fun repairFiles(sessionId: String, referencedIds: Set<String>) {
+        val missingIds = referencedIds.filterNot(services.filesClient::isAvailableBlocking).toSet()
+        if (missingIds.isEmpty()) return
+        val availableCopies = services.repository.getAttachments(sessionId)
+            .filter { it.serverFileId in missingIds && it.localPath?.let { path -> File(path).isFile } == true }
+            .associateBy { it.serverFileId }
+        if (!availableCopies.keys.containsAll(missingIds)) {
+            throw AppError(AppError.Kind.CONTEXT_LIMIT, str(UiR.string.file_unavailable_no_local_copy))
+        }
+        // Reuse the new ID for repeated references to the same file.
+        for (oldId in missingIds) {
+            val fileId = services.attachmentManager.uploadBlocking(availableCopies.getValue(oldId)) {}
+            services.repository.replaceServerFileId(sessionId, oldId, fileId)
         }
     }
 
@@ -741,7 +805,7 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             // 已有正文时关掉思考：思考开启时，纯文本的 assistant 前缀会被接口拒绝。
             val continueThinking = prefill.isBlank() && _ui.value.thinkingEnabled
             val attByMsg = attachmentsByMessage(sessionId, history)
-            if (rejectImages(attByMsg.imageFileIds)) return@launch
+            if (rejectDocuments(attByMsg) || rejectImages(attByMsg.imageFileIds)) return@launch
             val request = RequestFactory.build(
                 history = history,
                 blocksByMessageId = blocks,
@@ -787,7 +851,8 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
 
             val (pathBefore, _) = services.repository.activePathWithBlocks(sessionId)
             val historyBefore = pathBefore.takeWhile { it.id != userMessageId }
-            if (rejectImages(attachmentsByMessage(sessionId, historyBefore).imageFileIds)) return@launch
+            val refsBefore = attachmentsByMessage(sessionId, historyBefore)
+            if (rejectDocuments(refsBefore) || rejectImages(refsBefore.imageFileIds)) return@launch
 
             val newUser = ChatMessage(
                 id = services.time.newId(),
@@ -854,7 +919,58 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
 
     // ------------------------------ 附件（F07/F08） ------------------------------
 
-    fun addAttachment(uri: android.net.Uri) {
+    data class SharedDraft(val sessionId: String?, val hadFailures: Boolean)
+
+    /** 系统分享使用独立的本地草稿。只有用户发送后才走常规上传流程。 */
+    suspend fun importSharedDraft(uris: List<Uri>, text: String): SharedDraft = withContext(Dispatchers.IO) {
+        if (uris.isEmpty() && text.isBlank()) return@withContext SharedDraft(null, false)
+        val sessionId = try {
+            services.repository.createConversation().id
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return@withContext SharedDraft(null, true)
+        }
+        val imported = mutableListOf<Attachment>()
+        var hadFailures = false
+        var keepDraft = false
+        try {
+            for (uri in uris) {
+                ensureActive()
+                var attachment: Attachment? = null
+                try {
+                    attachment = services.attachmentManager.importBlocking(uri, sessionId)
+                    services.repository.insertAttachment(attachment)
+                    imported += attachment
+                } catch (e: CancellationException) {
+                    attachment?.let(services.attachmentManager::deleteLocalFile)
+                    throw e
+                } catch (_: Exception) {
+                    attachment?.let(services.attachmentManager::deleteLocalFile)
+                    hadFailures = true
+                }
+            }
+            if (imported.isEmpty() && text.isBlank()) return@withContext SharedDraft(null, true)
+            if (text.isNotBlank()) services.repository.saveDraft(sessionId, text)
+            val current = _ui.value
+            if (current.sessionId == null && current.draftText.isNotBlank()) {
+                services.repository.saveDraft(ensureSessionId(), current.draftText)
+            }
+            keepDraft = true
+            SharedDraft(sessionId, hadFailures)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            SharedDraft(null, true)
+        } finally {
+            if (!keepDraft) withContext(NonCancellable) {
+                imported.forEach(services.attachmentManager::deleteLocalFile)
+                runCatching { services.repository.delete(sessionId) }
+            }
+        }
+    }
+
+    fun addAttachment(uri: Uri) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val sessionId = ensureSessionId()
@@ -871,6 +987,56 @@ class ChatViewModel(private val services: ChatServices) : ViewModel() {
             } catch (e: Exception) {
                 _ui.value = _ui.value.copy(error = AttachmentManager.toAppError(e))
             }
+        }
+    }
+
+    suspend fun useImageRegion(attachmentId: String, crop: ImageCrop): String? = withContext(Dispatchers.IO) {
+        if (!sendMutex.tryLock()) return@withContext null
+        try {
+            val original = services.repository.getAttachment(attachmentId)
+                ?.takeIf { it.isImage } ?: return@withContext null
+            val pending = original.messageId == null
+            if (pending && original.sessionId != _ui.value.sessionId) return@withContext null
+
+            // A crop from history starts a fresh draft so the full image isn't included in its context.
+            val sessionId = if (pending) original.sessionId else services.repository.createConversation().id
+            var cropped: Attachment? = null
+            var committed = false
+            try {
+                val replacement = services.attachmentManager.cropImageBlocking(original, crop, sessionId)
+                cropped = replacement
+                ensureActive()
+                withContext(NonCancellable) {
+                    committed = if (pending) {
+                        services.repository.replacePendingAttachment(original.id, replacement)
+                    } else {
+                        services.repository.insertAttachment(replacement)
+                        true
+                    }
+                    if (committed && pending) {
+                        _ui.update { state ->
+                            if (state.sessionId != sessionId) state else state.copy(
+                                pendingAttachments = state.pendingAttachments.map { attachment ->
+                                    if (attachment.id == original.id) replacement else attachment
+                                },
+                            )
+                        }
+                        services.attachmentManager.deleteLocalFile(original)
+                    }
+                }
+                sessionId.takeIf { committed }
+            } finally {
+                if (!committed) withContext(NonCancellable) {
+                    cropped?.let(services.attachmentManager::deleteLocalFile)
+                    if (!pending) runCatching { services.repository.delete(sessionId) }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            null
+        } finally {
+            sendMutex.unlock()
         }
     }
 

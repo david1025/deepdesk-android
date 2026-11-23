@@ -54,11 +54,12 @@ object BlockJsonCodec {
         val site_name: String? = null,
         val site_icon: String? = null,
         val page_age: String? = null,
+        val image_url: String? = null,
     )
 
     fun encodeSearchResult(hits: List<SearchHit>, errorCode: String?, json: Json): String {
         val dto = SearchResultDto(
-            hits = hits.map { HitDto(it.title, it.url, it.snippet, it.siteName, it.siteIcon, it.pageAge) },
+            hits = hits.map { HitDto(it.title, it.url, it.snippet, it.siteName, it.siteIcon, it.pageAge, it.imageUrl) },
             error_code = errorCode,
         )
         return json.encodeToString(SearchResultDto.serializer(), dto)
@@ -68,7 +69,9 @@ object BlockJsonCodec {
         if (raw.isNullOrBlank()) return emptyList<SearchHit>() to null
         return runCatching {
             val dto = json.decodeFromString(SearchResultDto.serializer(), raw)
-            dto.hits.map { SearchHit(it.title, it.url, it.snippet, it.site_name, it.site_icon, it.page_age) } to dto.error_code
+            dto.hits.map {
+                SearchHit(it.title, it.url, it.snippet, it.site_name, it.site_icon, it.page_age, it.image_url)
+            } to dto.error_code
         }.getOrDefault(emptyList<SearchHit>() to null)
     }
 

@@ -55,7 +55,7 @@ data class SafetyCheck(val level: String) {
 @Serializable
 data class TitleConfig(val enabled: Boolean)
 
-/** 消息内容：纯文本或块数组（文本 + file_id 引用），序列化为 JsonElement 以兼容两种形态 */
+/** 消息内容：纯文本或块数组，可包含附件引用和历史助手工具块。 */
 @Serializable
 data class ApiMessage(
     val role: String,
@@ -67,11 +67,11 @@ data class ApiMessage(
     }
 }
 
-/** 请求内用户消息的 file 引用块（文档等非图片，与文本块拼成 content 数组） */
+/** Anthropic Messages 的文档引用块。 */
 @Serializable
-data class FileRefBlock(
-    val type: String = "file",
-    @SerialName("file_id") val fileId: String,
+data class DocumentFileBlock(
+    val type: String = "document",
+    val source: FileBlockSource,
 )
 
 /**
@@ -81,11 +81,11 @@ data class FileRefBlock(
 @Serializable
 data class ImageFileBlock(
     val type: String = "image",
-    val source: ImageFileSource,
+    val source: FileBlockSource,
 )
 
 @Serializable
-data class ImageFileSource(
+data class FileBlockSource(
     val type: String = "file",
     @SerialName("file_id") val fileId: String,
 )

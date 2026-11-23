@@ -8,6 +8,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -80,14 +81,13 @@ object BlockParsers {
                     ParsedBlock.WebSearchResult(obj.str("tool_use_id") ?: "", hits, errorCode)
                 }
                 "web_fetch_tool_result" -> {
-                    val content = obj["content"]
-                    val err = content?.jsonObjectOrNull()?.str("error_code")
-                        ?: content?.jsonObjectOrNull()?.obj("result")?.str("error_code")
+                    val content = obj.obj("content")
+                    val document = content?.obj("content")
                     ParsedBlock.WebFetchResult(
                         toolUseId = obj.str("tool_use_id") ?: "",
-                        url = content?.jsonObjectOrNull()?.str("url"),
-                        title = content?.jsonObjectOrNull()?.obj("content")?.obj("document")?.str("title"),
-                        errorCode = err,
+                        url = content?.str("url"),
+                        title = document?.pageTitle() ?: document?.obj("document")?.pageTitle(),
+                        errorCode = content?.str("error_code") ?: content?.obj("result")?.str("error_code"),
                     )
                 }
                 "citations" -> ParsedBlock.Citations(obj.parseCitationsField("citations"))
@@ -141,6 +141,10 @@ object BlockParsers {
         if (content == null) return emptyList<SearchHit>() to null
         return when (content) {
             is JsonArray -> {
+                val errorCode = content.firstNotNullOfOrNull { item ->
+                    val entry = item as? JsonObject ?: return@firstNotNullOfOrNull null
+                    if (entry.str("type") == "web_search_tool_result_error") entry.str("error_code") else null
+                }
                 val hits = content.mapNotNull { item ->
                     runCatching {
                         val o = item.jsonObject
@@ -152,11 +156,12 @@ object BlockParsers {
                                 siteName = o.str("site_name"),
                                 siteIcon = o.str("site_icon"),
                                 pageAge = o.str("page_age"),
+                                imageUrl = o.str("image_url"),
                             )
                         } else null
                     }.getOrNull()
                 }
-                hits to null
+                hits to errorCode
             }
             is JsonObject -> {
                 val errorCode = content.str("error_code")
@@ -179,6 +184,9 @@ object BlockParsers {
         (this[key] as? JsonPrimitive)?.takeIf { it.isString || it.content.isNotEmpty() }?.content
 
     private fun JsonObject.obj(key: String): JsonObject? = this[key] as? JsonObject
+
+    private fun JsonObject.pageTitle(): String? =
+        (this["title"] as? JsonPrimitive)?.contentOrNull?.takeIf(String::isNotBlank)
 
     private fun JsonElement.jsonObjectOrNull(): JsonObject? =
         runCatching { jsonObject }.getOrNull()

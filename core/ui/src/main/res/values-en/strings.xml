@@ -109,6 +109,8 @@
     <string name="effort_max">Max</string>
     <string name="model_no_vision">This model does not accept images. Switch to DeepSeek Flash, or remove the images.</string>
     <string name="model_no_vision_hint">This model does not accept images. You can still add files.</string>
+    <string name="share_import_failed">Unable to import shared content. Check the file type or access permissions.</string>
+    <string name="share_import_partial">Unable to import some shared files. Check their file types or access permissions.</string>
     <string name="thinking_stop_off">Off</string>
     <string name="thinking_stop_max">Max</string>
     <string name="thinking_chip">Think: %1$s</string>
@@ -205,6 +207,13 @@
     <string name="no_chats_yet">No chats yet</string>
     <string name="no_chats_hint">Your conversations with DeepSeek\nwill appear here</string>
     <string name="start_new_chat">Start a new chat</string>
+    <string name="document_reference_limit">Each request can reference up to %1$d documents, including chat history. This request has %2$d.</string>
+    <string name="document_reference_limit_server">This request exceeds the %1$d-document limit. Start a new chat and select the documents you need.</string>
+    <string name="context_limit_reached">This chat has reached its length limit</string>
+    <string name="document_text_limit">The extracted document text exceeds 8 MiB. Send the documents in smaller batches in a new chat.</string>
+    <string name="file_unavailable">A file is no longer available</string>
+    <string name="reupload_file">Upload again</string>
+    <string name="file_unavailable_no_local_copy">The local copy is missing. Start a new chat and select the file again.</string>
     <string name="select_chats">Select chats</string>
     <string name="selected_chats">%1$d selected</string>
     <string name="cancel_multiselect">Cancel</string>
@@ -237,7 +246,9 @@
     <string name="searching_web">Searching the web…</string>
     <string name="reading_page">Reading page…</string>
     <string name="using_tool">Using tool: %1$s</string>
-    <string name="search_failed">Search failed (%1$s)</string>
+    <string name="search_failed">Web search failed. Try again.</string>
+    <string name="search_unavailable">Web search is temporarily unavailable. Try again later.</string>
+    <string name="search_rate_limited">Too many web searches. Try again later.</string>
     <string name="read_pages">Read %1$d pages</string>
     <string name="searched_pages">Searched %1$d pages</string>
     <string name="browsed_pages">Browsed %1$d pages</string>
@@ -255,13 +266,21 @@
     <string name="ocr_empty">No text found</string>
     <string name="edited_badge">Edited</string>
     <string name="reply_interrupted">Reply interrupted (network). Received content was kept.</string>
-    <string name="generation_failed">Generation failed. You can retry.</string>
+    <string name="generation_failed">Could not generate a reply. Try again.</string>
+    <string name="check_network_retry">Check your connection and try again</string>
     <string name="generation_stopped">Generation stopped</string>
     <string name="stopped_label">Stopped</string>
     <string name="continue_generate">Continue</string>
     <string name="attach_prompt_what">What is this</string>
     <string name="attach_prompt_analyze">Analyze this</string>
     <string name="attach_prompt_how">What should I do</string>
+    <string name="image_crop">Crop</string>
+    <string name="image_crop_rotate">Rotate</string>
+    <string name="image_crop_ask">Ask a question</string>
+    <string name="image_region_canvas">Image selection area</string>
+    <string name="image_region_saving">Cropping…</string>
+    <string name="image_region_load_failed">Unable to read this image.</string>
+    <string name="image_region_save_failed">Unable to save the selection. Try again.</string>
     <string name="grant_more_photos">Allow more photos</string>
     <string name="uploading_percent">Uploading %1$d%%</string>
     <string name="stop_speech">Stop reading</string>
@@ -269,4 +288,8 @@
     <string name="content_refused">This reply could not be generated due to the content safety policy.</string>
     <string name="share_chooser">Share</string>
     <string name="previous_version">Previous version</string>
+    <string name="image_preview_position">%1$d/%2$d</string>
+    <string name="image_download">Download image</string>
+    <string name="image_download_success">Image saved</string>
+    <string name="image_download_failed">Unable to save image</string>
 </resources>

@@ -5,6 +5,7 @@ import com.david.deepdesk.core.model.ChatMessage
 import com.david.deepdesk.core.model.ChatModels
 import com.david.deepdesk.core.model.MessageRequest
 import com.david.deepdesk.core.model.ReplyBlock
+import com.david.deepdesk.core.model.ToolSpec
 import com.david.deepdesk.core.network.ApiJson
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonArray
@@ -79,8 +80,9 @@ class RequestFactoryTest {
         // 文本块 + 2 个 file 引用块
         assertEquals(3, arr.size)
         assertEquals("text", arr[0].jsonObject["type"]?.jsonPrimitive?.content)
-        assertEquals("file", arr[1].jsonObject["type"]?.jsonPrimitive?.content)
-        assertEquals("file-api-1", arr[1].jsonObject["file_id"]?.jsonPrimitive?.content)
+        assertEquals("document", arr[1].jsonObject["type"]?.jsonPrimitive?.content)
+        assertEquals("file", arr[1].jsonObject["source"]?.jsonObject?.get("type")?.jsonPrimitive?.content)
+        assertEquals("file-api-1", arr[1].jsonObject["source"]?.jsonObject?.get("file_id")?.jsonPrimitive?.content)
     }
 
     @Test
@@ -101,8 +103,8 @@ class RequestFactoryTest {
         val source = image["source"]!!.jsonObject
         assertEquals("file", source["type"]?.jsonPrimitive?.content)
         assertEquals("file-api-img", source["file_id"]?.jsonPrimitive?.content)
-        assertEquals("file", arr[2].jsonObject["type"]?.jsonPrimitive?.content)
-        assertEquals("file-api-pdf", arr[2].jsonObject["file_id"]?.jsonPrimitive?.content)
+        assertEquals("document", arr[2].jsonObject["type"]?.jsonPrimitive?.content)
+        assertEquals("file-api-pdf", arr[2].jsonObject["source"]?.jsonObject?.get("file_id")?.jsonPrimitive?.content)
     }
 
     @Test
@@ -246,5 +248,36 @@ class RequestFactoryTest {
     fun `URL 检测`() {
         assertTrue(RequestFactory.containsUrl("看看 https://example.com/a?b=1 说了什么"))
         assertFalse(RequestFactory.containsUrl("普通消息，没有链接"))
+    }
+
+    @Test
+    fun `重新生成含链接的问题时可以关闭联网搜索并保留读链接工具`() {
+        val originalPrompt = "阅读 https://example.com/article 并引用原文"
+        val followUpPrompt = "用一句话总结"
+        val original = userMsg("original", originalPrompt)
+        val answer = assistantMsg("answer", parent = original.id)
+        val followUp = userMsg("follow-up", followUpPrompt, parent = answer.id)
+        val blocks = mapOf(
+            original.id to listOf(ReplyBlock.Text(originalPrompt)),
+            answer.id to listOf(ReplyBlock.Text("已阅读原文")),
+            followUp.id to listOf(ReplyBlock.Text(followUpPrompt)),
+        )
+        val options = RequestFactory.Options(
+            thinkingEnabled = false, webSearchEnabled = false, readUrlEnabled = false, titleEnabled = false,
+        )
+        val originalHistory = listOf(original)
+        val regenerated = RequestFactory.build(
+            history = originalHistory,
+            blocksByMessageId = blocks,
+            attachmentsByMessageId = emptyMap(),
+            newMessageText = "",
+            newMessageFileIds = emptyList(),
+            options = options.copy(readUrlEnabled = RequestFactory.lastUserMessageContainsUrl(originalHistory, blocks)),
+            appendUserMessage = false,
+        )
+
+        assertEquals(listOf(ToolSpec.READ_URL), regenerated.tools)
+        assertEquals(listOf(ApiMessage.user(originalPrompt)), regenerated.messages)
+        assertFalse(RequestFactory.lastUserMessageContainsUrl(listOf(original, answer, followUp), blocks))
     }
 }

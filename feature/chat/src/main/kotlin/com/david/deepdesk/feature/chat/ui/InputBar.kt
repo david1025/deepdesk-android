@@ -1181,7 +1181,7 @@ private fun PendingAttachments(
                 if (image) {
                     PendingImageCard(
                         path = path,
-                        onPreview = { imagePreview?.open(path) },
+                        onPreview = { imagePreview?.open(att) },
                         onRemove = { onRemove(att.id) },
                     )
                 } else {
@@ -1226,16 +1226,13 @@ private fun PendingAttachments(
 
 @Composable
 private fun PendingImageCard(path: String, onPreview: () -> Unit, onRemove: () -> Unit) {
-    Box(Modifier.size(76.dp)) {
-        AsyncImage(
-            model = File(path),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .sharedPreviewImage(path)
-                .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onPreview),
+    Box(Modifier.size(76.dp), contentAlignment = Alignment.Center) {
+        AttachmentThumbnail(
+            path = path,
+            description = stringResource(UiR.string.preview),
+            maxEdge = 76.dp,
+            square = true,
+            onClick = onPreview,
         )
         RemoveBadge(onRemove, Modifier.align(Alignment.TopEnd).padding(4.dp))
     }

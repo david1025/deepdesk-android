@@ -1,5 +1,6 @@
 package com.david.deepdesk
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,8 +12,10 @@ import androidx.lifecycle.lifecycleScope
 import com.david.deepdesk.core.ui.AppLocales
 import com.david.deepdesk.core.ui.DeepSeekTheme
 import com.david.deepdesk.feature.voice.recording.RecordingController
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -20,11 +23,14 @@ import kotlinx.coroutines.launch
  * AppCompatActivity 以支持按应用语言持久化（AppCompat per-app locales）。
  */
 class MainActivity : AppCompatActivity() {
+    private val incomingShares = Channel<IncomingShare>(Channel.UNLIMITED)
+    private val shares = incomingShares.receiveAsFlow()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null) receiveShare(intent)
 
         val container = (application as DeepSeekApplication).container
 
@@ -43,9 +49,19 @@ class MainActivity : AppCompatActivity() {
                 initial = com.david.deepdesk.core.datastore.AppSettings(),
             )
             DeepSeekTheme(themeMode = settings.themeMode) {
-                AppNavHost(container = container)
+                AppNavHost(container = container, incomingShares = shares)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        receiveShare(intent)
+    }
+
+    private fun receiveShare(intent: Intent) {
+        val share = runCatching { IncomingShare.from(intent, "$packageName.fileprovider") }.getOrNull()
+        if (share != null) incomingShares.trySend(share)
     }
 
     /** 切后台立即释放麦克风并取消进行中的 ASR（§7.2 / AT-10） */

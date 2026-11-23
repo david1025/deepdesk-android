@@ -7,6 +7,7 @@ import com.david.deepdesk.core.model.SseEvent
 import com.david.deepdesk.core.model.StopReason
 import com.david.deepdesk.core.model.StopDetails
 import com.david.deepdesk.core.model.UsageInfo
+import kotlinx.serialization.json.JsonObject
 
 /**
  * SSE 事件规约器（§5.3）：
@@ -96,6 +97,7 @@ class MessageEventReducer {
     }
 
     private val blocksById = linkedMapOf<Int, DraftBlock>()
+    private val webToolHistory = WebToolHistory()
     private var nextLocalId = 1
 
     private var stopReason: String? = null
@@ -118,6 +120,7 @@ class MessageEventReducer {
         }
 
         is SseEvent.ContentBlockStart -> {
+            (event.block as? JsonObject)?.let { webToolHistory.start(event.index, it) }
             val parsed = BlockParsers.parseBlockStart(event.block)
             when (parsed) {
                 is BlockParsers.ParsedBlock.Text ->
@@ -147,6 +150,7 @@ class MessageEventReducer {
         }
 
         is SseEvent.ContentBlockDelta -> {
+            (event.delta as? JsonObject)?.let { webToolHistory.delta(event.index, it) }
             when (val delta = BlockParsers.parseDelta(event.delta)) {
                 is BlockParsers.ParsedDelta.Text ->
                     (blocksById[event.index] as? DraftBlock.Text)?.text?.append(delta.text)
@@ -164,6 +168,7 @@ class MessageEventReducer {
         }
 
         is SseEvent.ContentBlockStop -> {
+            webToolHistory.stop(event.index)
             when (val b = blocksById[event.index]) {
                 is DraftBlock.Text -> blocksById[event.index] = b.copy(closed = true)
                 is DraftBlock.Thinking -> blocksById[event.index] = b.copy(
@@ -256,6 +261,9 @@ class MessageEventReducer {
             Triple(s("action"), s("query"), s("url"))
         }.getOrDefault(Triple(null, null, null))
     }
+
+    internal fun completedWebToolHistory() =
+        if (finished && failure == null && refusal == null) webToolHistory.toStoredBlock() else null
 
     fun snapshot(): Draft = Draft(
         blocks = blocksById.values.toList(),

@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
@@ -18,6 +19,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.File
 import java.io.IOException
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
@@ -70,6 +72,24 @@ class FilesApiClient(
             } catch (e: Exception) {
                 throw DeepSeekApiException(response.code, "parse_error", "文件上传响应解析失败", response.header("x-request-id"))
             }
+        }
+    }
+
+    fun isAvailableBlocking(fileId: String): Boolean {
+        val request = Request.Builder()
+            .url((baseUrl + "anthropic/v1/files").toHttpUrl().newBuilder().addPathSegment(fileId).build())
+            .build()
+        val call = client.newCall(request)
+        call.timeout().timeout(10, TimeUnit.SECONDS)
+        call.execute().use { response ->
+            if (response.code == 404 || response.code == 410) return false
+            if (!response.isSuccessful) {
+                val error = runCatching {
+                    ApiJson.decodeFromString(ApiErrorEnvelope.serializer(), response.body?.string().orEmpty()).error
+                }.getOrNull()
+                throw DeepSeekApiException.fromBody(response.code, error, response.header("x-request-id"))
+            }
+            return true
         }
     }
 

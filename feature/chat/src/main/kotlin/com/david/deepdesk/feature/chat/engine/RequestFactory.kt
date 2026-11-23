@@ -3,18 +3,21 @@ package com.david.deepdesk.feature.chat.engine
 import com.david.deepdesk.core.model.ApiMessage
 import com.david.deepdesk.core.model.ChatMessage
 import com.david.deepdesk.core.model.ChatModels
-import com.david.deepdesk.core.model.FileRefBlock
+import com.david.deepdesk.core.model.DocumentFileBlock
+import com.david.deepdesk.core.model.FileBlockSource
 import com.david.deepdesk.core.model.ImageFileBlock
-import com.david.deepdesk.core.model.ImageFileSource
 import com.david.deepdesk.core.model.MessageRequest
 import com.david.deepdesk.core.model.OutputConfig
 import com.david.deepdesk.core.model.ReplyBlock
+import com.david.deepdesk.core.model.ReplyStatus
 import com.david.deepdesk.core.model.SafetyCheck
 import com.david.deepdesk.core.model.TextBlock
 import com.david.deepdesk.core.model.ThinkingConfig
 import com.david.deepdesk.core.model.TitleConfig
 import com.david.deepdesk.core.model.ToolSpec
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.add
@@ -47,7 +50,19 @@ object RequestFactory {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
-    /** 历史 assistant 消息仅回传正文文本（thinking 不回传） */
+    internal fun referencedFileIds(request: MessageRequest): Set<String> = buildSet {
+        for (message in request.messages) {
+            if (message.role != "user") continue
+            val blocks = message.content as? JsonArray ?: continue
+            for (block in blocks) {
+                val source = (block as? JsonObject)?.get("source") as? JsonObject ?: continue
+                val fileId = source["file_id"] as? JsonPrimitive ?: continue
+                add(fileId.content)
+            }
+        }
+    }
+
+    /** 读取正文，作为普通历史及没有原始联网工具块的历史回退。 */
     private fun textOf(messageId: String, blocksByMessageId: Map<String, List<ReplyBlock>>): String =
         blocksByMessageId[messageId].orEmpty()
             .filterIsInstance<ReplyBlock.Text>()
@@ -63,15 +78,16 @@ object RequestFactory {
                     add(json.encodeToJsonElement(TextBlock.serializer(), TextBlock(text = text)))
                 }
                 fileIds.forEach { id ->
+                    val source = FileBlockSource(fileId = id)
                     if (id in imageFileIds) {
                         add(
                             json.encodeToJsonElement(
                                 ImageFileBlock.serializer(),
-                                ImageFileBlock(source = ImageFileSource(fileId = id)),
+                                ImageFileBlock(source = source),
                             ),
                         )
                     } else {
-                        add(json.encodeToJsonElement(FileRefBlock.serializer(), FileRefBlock(fileId = id)))
+                        add(json.encodeToJsonElement(DocumentFileBlock.serializer(), DocumentFileBlock(source = source)))
                     }
                 }
             }
@@ -91,14 +107,24 @@ object RequestFactory {
         /** 继续生成：把已写出的正文作为 assistant 前缀，模型接着写。 */
         assistantPrefill: String? = null,
     ): MessageRequest {
+        val model = ChatModels.sanitize(options.model)
         val messages = buildList {
             history.forEach { msg ->
                 val fileIds = attachmentsByMessageId[msg.id].orEmpty()
                 if (msg.role == "user") {
                     add(ApiMessage("user", userContent(textOf(msg.id, blocksByMessageId), fileIds, imageFileIds)))
                 } else {
-                    val text = textOf(msg.id, blocksByMessageId)
-                    if (text.isNotBlank()) add(ApiMessage.assistant(text))
+                    val webHistory = if (model == ChatModels.FLASH && msg.status == ReplyStatus.DONE) {
+                        WebToolHistory.read(blocksByMessageId[msg.id].orEmpty())
+                    } else {
+                        null
+                    }
+                    if (webHistory != null) {
+                        add(ApiMessage("assistant", webHistory))
+                    } else {
+                        val text = textOf(msg.id, blocksByMessageId)
+                        if (text.isNotBlank()) add(ApiMessage.assistant(text))
+                    }
                 }
             }
             if (appendUserMessage) {
@@ -116,7 +142,7 @@ object RequestFactory {
 
         val effort = options.reasoningEffort?.let(ChatModels::sanitizeEffort)
         return MessageRequest(
-            model = ChatModels.sanitize(options.model),
+            model = model,
             system = SYSTEM_PROMPT,
             messages = messages,
             thinking = if (options.thinkingEnabled) ThinkingConfig.ENABLED else ThinkingConfig.DISABLED,
@@ -131,4 +157,10 @@ object RequestFactory {
     /** 用户消息中的 URL 是否存在（读链接由服务端工具触发） */
     fun containsUrl(text: String): Boolean =
         Regex("https?://[\\w\\-._~:/?#\\[\\]@!$&'()*+,;=%]+").containsMatchIn(text)
+
+    internal fun lastUserMessageContainsUrl(
+        history: List<ChatMessage>,
+        blocksByMessageId: Map<String, List<ReplyBlock>>,
+    ): Boolean = history.lastOrNull()?.takeIf { it.role == "user" }
+        ?.let { containsUrl(textOf(it.id, blocksByMessageId)) } == true
 }

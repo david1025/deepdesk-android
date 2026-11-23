@@ -109,6 +109,8 @@
     <string name="effort_max">最大</string>
     <string name="model_no_vision">当前模型不支持图片。请改用 DeepSeek Flash，或去掉图片后再发送。</string>
     <string name="model_no_vision_hint">当前模型不支持图片，只能添加文件。</string>
+    <string name="share_import_failed">无法导入分享内容，请检查文件格式或访问权限。</string>
+    <string name="share_import_partial">部分分享文件未能导入，请检查文件格式或访问权限。</string>
     <string name="thinking_stop_off">关闭</string>
     <string name="thinking_stop_max">最高</string>
     <string name="thinking_chip">思考: %1$s</string>
@@ -205,6 +207,13 @@
     <string name="no_chats_yet">暂无对话</string>
     <string name="no_chats_hint">你与 DeepSeek 的对话\n将展示在这里</string>
     <string name="start_new_chat">开启新对话</string>
+    <string name="document_reference_limit">每次请求最多引用 %1$d 个文档（含历史附件），本次有 %2$d 个。</string>
+    <string name="document_reference_limit_server">本次请求超过 %1$d 个文档的上限。请在新对话里选取需要的文档。</string>
+    <string name="context_limit_reached">对话长度已达上限</string>
+    <string name="document_text_limit">文档解析后的文字超过 8 MiB。请在新对话里分批发送。</string>
+    <string name="file_unavailable">文件已失效</string>
+    <string name="reupload_file">重新上传</string>
+    <string name="file_unavailable_no_local_copy">找不到失效文件的本地副本。请开启新对话并重新选择文件。</string>
     <string name="select_chats">选择对话</string>
     <string name="selected_chats">已选择 %1$d 个对话</string>
     <string name="cancel_multiselect">取消多选</string>
@@ -237,7 +246,9 @@
     <string name="searching_web">正在联网搜索…</string>
     <string name="reading_page">正在阅读网页…</string>
     <string name="using_tool">正在使用工具：%1$s</string>
-    <string name="search_failed">搜索失败（%1$s）</string>
+    <string name="search_failed">联网搜索失败，请重试</string>
+    <string name="search_unavailable">联网搜索暂时不可用，请稍后重试</string>
+    <string name="search_rate_limited">联网搜索请求过于频繁，请稍后重试</string>
     <string name="read_pages">已阅读 %1$d 个网页</string>
     <string name="searched_pages">已搜索到 %1$d 个网页</string>
     <string name="browsed_pages">已浏览 %1$d 个页面</string>
@@ -255,13 +266,21 @@
     <string name="ocr_empty">未识别到文本</string>
     <string name="edited_badge">已编辑</string>
     <string name="reply_interrupted">回复中断（网络异常），已保留已接收内容</string>
-    <string name="generation_failed">生成失败，可重试</string>
+    <string name="generation_failed">回复失败，请重试</string>
+    <string name="check_network_retry">请检查网络后重试</string>
     <string name="generation_stopped">已停止生成</string>
     <string name="stopped_label">已停止</string>
     <string name="continue_generate">继续生成</string>
     <string name="attach_prompt_what">这是什么</string>
     <string name="attach_prompt_analyze">分析一下</string>
     <string name="attach_prompt_how">怎么办</string>
+    <string name="image_crop">裁剪</string>
+    <string name="image_crop_rotate">旋转</string>
+    <string name="image_crop_ask">去提问</string>
+    <string name="image_region_canvas">图片选区</string>
+    <string name="image_region_saving">正在裁剪…</string>
+    <string name="image_region_load_failed">无法读取这张图片。</string>
+    <string name="image_region_save_failed">无法保存选区，请再试一次。</string>
     <string name="grant_more_photos">授权更多可访问图片</string>
     <string name="uploading_percent">上传中 %1$d%%</string>
     <string name="stop_speech">停止朗读</string>
@@ -269,4 +288,8 @@
     <string name="content_refused">根据内容安全政策，该内容无法生成回复。</string>
     <string name="share_chooser">分享</string>
     <string name="previous_version">上一版本</string>
+    <string name="image_preview_position">%1$d/%2$d</string>
+    <string name="image_download">下载图片</string>
+    <string name="image_download_success">图片已保存</string>
+    <string name="image_download_failed">保存图片失败</string>
 </resources>

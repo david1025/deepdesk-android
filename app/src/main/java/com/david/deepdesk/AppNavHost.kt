@@ -1,5 +1,6 @@
 package com.david.deepdesk
 
+import android.widget.Toast
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -29,7 +30,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.david.deepdesk.core.ui.R as UiR
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -38,6 +38,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.david.deepdesk.feature.chat.ChatViewModel
 import com.david.deepdesk.feature.chat.ui.ChatScreen
+import com.david.deepdesk.feature.chat.ui.ImagePreviewController
 import com.david.deepdesk.feature.history.HistoryBackupButtons
 import com.david.deepdesk.feature.history.HistoryBackupHost
 import com.david.deepdesk.feature.history.HistoryViewModel
@@ -47,13 +48,14 @@ import com.david.deepdesk.feature.settings.SettingsScreen
 import com.david.deepdesk.feature.settings.SettingsViewModel
 import com.david.deepdesk.feature.settings.TokenStatsScreen
 import com.david.deepdesk.feature.settings.TokenStatsViewModel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 
 /**
  * 导航图：聊天主页（抽屉）↔ 设置。单 Activity（§3.1）。
  */
 @Composable
-fun AppNavHost(container: AppContainer) {
+internal fun AppNavHost(container: AppContainer, incomingShares: Flow<IncomingShare>) {
     val navController = rememberNavController()
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -69,6 +71,31 @@ fun AppNavHost(container: AppContainer) {
     val chatFactory = remember {
         viewModelFactory {
             initializer { ChatViewModel(container.chatServices) }
+        }
+    }
+    // Activity 级单例，跨聊天、设置和系统分享沿用同一个 ViewModel。
+    val chatViewModel: ChatViewModel = viewModel(key = "chat_main", factory = chatFactory)
+    val context = LocalContext.current
+    fun openChat(sessionId: String) {
+        navController.navigate("chat/$sessionId") {
+            popUpTo("chat/{sessionId}") { inclusive = true }
+            launchSingleTop = true
+        }
+    }
+    LaunchedEffect(incomingShares) {
+        incomingShares.collect { share ->
+            val draft = chatViewModel.importSharedDraft(share.files, share.text)
+            val sessionId = draft.sessionId
+            if (sessionId != null) {
+                drawerState.close()
+                openChat(sessionId)
+            }
+            val error = when {
+                sessionId == null -> UiR.string.share_import_failed
+                draft.hadFailures -> UiR.string.share_import_partial
+                else -> null
+            }
+            error?.let { Toast.makeText(context, it, Toast.LENGTH_LONG).show() }
         }
     }
     val usageFactory = remember {
@@ -114,13 +141,6 @@ fun AppNavHost(container: AppContainer) {
                 },
             ) { entry ->
                 val sessionId = entry.arguments?.getString("sessionId") ?: "new"
-                // Activity 级单例 VM：生成/录音任务跨导航连续（§3.3），会话切换由 loadSession 承担
-                val owner = LocalContext.current as ViewModelStoreOwner
-                val chatViewModel: ChatViewModel = viewModel(
-                    viewModelStoreOwner = owner,
-                    key = "chat_main",
-                    factory = chatFactory,
-                )
                 // 抽屉高亮以 VM 中真实会话 ID 为准：发出首条消息后路由仍是 chat/new，
                 // 只有 VM 里的 sessionId 才是实际落库的会话，避免高亮丢失。
                 val chatUiState by chatViewModel.ui.collectAsState()
@@ -130,8 +150,10 @@ fun AppNavHost(container: AppContainer) {
                 }
 
                 val screenWidthDp = LocalConfiguration.current.screenWidthDp
+                val imagePreview = remember { ImagePreviewController() }
                 DismissibleNavigationDrawer(
                     drawerState = drawerState,
+                    gesturesEnabled = imagePreview.path == null,
                     drawerContent = {
                         DismissibleDrawerSheet(
                             modifier = Modifier
@@ -147,10 +169,7 @@ fun AppNavHost(container: AppContainer) {
                                 activeSessionId = activeSessionId,
                                 onSelectSession = { id ->
                                     scope.launch { drawerState.close() }
-                                    navController.navigate("chat/$id") {
-                                        popUpTo("chat/{sessionId}") { inclusive = true }
-                                        launchSingleTop = true
-                                    }
+                                    openChat(id)
                                 },
                                 onOpenSettings = {
                                     scope.launch { drawerState.close() }
@@ -175,6 +194,8 @@ fun AppNavHost(container: AppContainer) {
                         ChatScreen(
                             viewModel = chatViewModel,
                             sessionId = sessionId,
+                            imagePreview = imagePreview,
+                            onOpenCroppedDraft = ::openChat,
                             onOpenDrawer = { scope.launch { drawerState.open() } },
                             onOpenSettings = {
                                 scope.launch { drawerState.close() }
@@ -231,12 +252,6 @@ fun AppNavHost(container: AppContainer) {
                     }
                 }
                 val settingsViewModel: SettingsViewModel = viewModel(factory = settingsFactory, key = "settings")
-                val owner = LocalContext.current as ViewModelStoreOwner
-                val chatViewModel: ChatViewModel = viewModel(
-                    viewModelStoreOwner = owner,
-                    key = "chat_main",
-                    factory = chatFactory,
-                )
                 SettingsScreen(
                     viewModel = settingsViewModel,
                     usageViewModel = usageViewModel,

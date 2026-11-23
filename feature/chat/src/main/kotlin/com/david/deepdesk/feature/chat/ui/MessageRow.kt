@@ -1,5 +1,8 @@
 package com.david.deepdesk.feature.chat.ui
 
+import com.david.deepdesk.feature.chat.engine.ChatRequestLimit
+import com.david.deepdesk.feature.chat.engine.MAX_DOCUMENT_REFERENCES
+
 import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
@@ -15,8 +18,10 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,20 +37,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.layout.ContentScale
-import coil.compose.AsyncImage
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -76,6 +81,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
@@ -96,6 +102,8 @@ import com.david.deepdesk.core.ui.R as UiR
 import com.david.deepdesk.core.ui.RenderedSelectionController
 import com.david.deepdesk.feature.chat.UiMessage
 
+internal val ChatMessageGutter = 16.dp
+
 /**
  * 单条消息渲染：用户靠右气泡、助手靠左全宽（对齐官方 Demo 交互）。
  * 支持长按复制、分享、编辑提问、重新生成、切换分支（F09）。
@@ -106,6 +114,7 @@ fun MessageRow(
     streaming: Boolean,
     isSpeaking: Boolean,
     onRegenerate: () -> Unit,
+    onNewChat: () -> Unit,
     onSwitchVersion: (Int) -> Unit,
     versionsEnabled: Boolean,
     onRequestEdit: (String) -> Unit,
@@ -114,14 +123,23 @@ fun MessageRow(
     autoCollapseThinking: Boolean = true,
     onContinue: (() -> Unit)? = null,
     onUserFold: (Boolean) -> Unit = {},
+    retryHint: String? = null,
+    retryLabel: String? = null,
+    onRetryMessage: (() -> Unit)? = null,
+    recoveryShownWithUser: Boolean = false,
 ) {
     if (item.message.role == "user") {
-        UserMessageRow(item, onRequestEdit, onCopied, onUserFold, onSwitchVersion, !versionsEnabled)
-    } else {
-        AssistantMessageRow(
-            item, streaming, isSpeaking, onRegenerate, onToggleTts, onCopied,
-            autoCollapseThinking, onContinue,
+        UserMessageRow(
+            item, onRequestEdit, onCopied, onUserFold, onSwitchVersion, !versionsEnabled,
+            retryHint, retryLabel, onRetryMessage,
         )
+    } else {
+        Box(Modifier.padding(horizontal = ChatMessageGutter)) {
+            AssistantMessageRow(
+                item, streaming, isSpeaking, onRegenerate, onToggleTts, onCopied,
+                autoCollapseThinking, onContinue, onNewChat, recoveryShownWithUser,
+            )
+        }
     }
 }
 
@@ -133,6 +151,9 @@ private fun UserMessageRow(
     onFold: (Boolean) -> Unit,
     onSwitchVersion: (Int) -> Unit,
     streaming: Boolean,
+    retryHint: String?,
+    retryLabel: String?,
+    onRetry: (() -> Unit)?,
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -219,200 +240,233 @@ private fun UserMessageRow(
             .padding(vertical = 4.dp),
     ) {
         if (files.isNotEmpty()) {
-            UserFileCards(files)
+            Box(Modifier.padding(horizontal = ChatMessageGutter)) { UserFileCards(files) }
         }
-        if (text.isBlank() && images.isEmpty() && !item.message.edited) return@Column
-        Box(Modifier.onGloballyPositioned { boxOrigin = it.positionInWindow() }) {
-            Surface(
-                shape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp),
-                color = bubble,
-                modifier = Modifier
-                    .widthIn(max = 320.dp)
-                    .onSizeChanged { bubbleWidth = it.width },
-            ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                    if (item.message.edited) {
-                        Text(
-                            stringResource(UiR.string.edited_badge),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        UserAttachments(images) { imagePreview?.open(images, it) }
+        val hasBubble = text.isNotBlank() || item.message.edited
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = ChatMessageGutter),
+        ) {
+            if (retryLabel != null) {
+                IconButton(onClick = { onRetry?.invoke() }, enabled = onRetry != null) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier.size(24.dp).background(
+                            if (onRetry != null) Color(0xFFF49E0B) else MaterialTheme.colorScheme.surfaceVariant,
+                            CircleShape,
+                        ),
+                    ) {
+                        DsIcon(
+                            UiR.drawable.ic_retry_clockwise_20,
+                            contentDescription = retryLabel,
+                            tint = if (onRetry != null) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp),
                         )
                     }
-                    UserAttachments(images, onOpenImage = { imagePreview?.open(it) })
-                    if (text.isNotBlank()) {
-                        Column(
-                            modifier = if (clipReady) {
-                                Modifier
-                                    .height(with(density) { heightAnim.value.toDp() })
-                                    .clipToBounds()
-                            } else {
-                                Modifier
+                }
+            }
+            if (hasBubble) {
+                Box(Modifier.onGloballyPositioned { boxOrigin = it.positionInWindow() }) {
+                    Surface(
+                        shape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp),
+                        color = bubble,
+                        modifier = Modifier
+                            .widthIn(max = 320.dp)
+                            .onSizeChanged { bubbleWidth = it.width },
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            if (item.message.edited) {
+                                Text(
+                                    stringResource(UiR.string.edited_badge),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (text.isNotBlank()) {
+                                Column(
+                                    modifier = if (clipReady) {
+                                        Modifier
+                                            .height(with(density) { heightAnim.value.toDp() })
+                                            .clipToBounds()
+                                    } else {
+                                        Modifier
+                                    },
+                                ) {
+                                Text(
+                                    text = text,
+                                    style = textStyle,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = if (clipReady || expanded || (canFold.not() && bubbleWidth > 0)) {
+                                        Int.MAX_VALUE
+                                    } else {
+                                        UserMessageFoldLines
+                                    },
+                                    overflow = TextOverflow.Clip,
+                                    onTextLayout = { textLayout = it },
+                                    modifier = Modifier
+                                        .wrapContentHeight(align = Alignment.Top, unbounded = true)
+                                        .onGloballyPositioned { textOrigin = it.positionInWindow() }
+                                        .drawBehind {
+                                            val layout = textLayout ?: return@drawBehind
+                                            if (!selecting) return@drawBehind
+                                            val rect = selectionRect(layout, selStart, selEnd)
+                                            if (rect == androidx.compose.ui.geometry.Rect.Zero) return@drawBehind
+                                            drawPath(
+                                                layout.getPathForRange(
+                                                    minOf(selStart, selEnd).coerceIn(0, text.length),
+                                                    maxOf(selStart, selEnd).coerceIn(0, text.length),
+                                                ),
+                                                SelectionHighlightColor,
+                                            )
+                                        }
+                                        .pointerInput(item.message.id, selecting, expanded, showMenu, text) {
+                                            detectTapGestures(
+                                                onTap = {
+                                                    if (selecting) selecting = false
+                                                    else if (!showMenu && text.isNotBlank()) onRequestEdit(text)
+                                                },
+                                                onLongPress = { local ->
+                                                    pressLocal = local
+                                                    selecting = false
+                                                    showMenu = true
+                                                },
+                                            )
+                                        },
+                                )
+                                if (canFold && expanded) {
+                                    Spacer(Modifier.height(26.dp))
+                                }
+                                }
+                            }
+                        }
+                    }
+                    if (canFold) {
+                        UserMessageFoldButton(
+                            expanded = expanded,
+                            dark = dark,
+                            onClick = {
+                                val expanding = !expanded
+                                selecting = false
+                                expanded = expanding
+                                onFold(expanding)
                             },
-                        ) {
-                        Text(
-                            text = text,
-                            style = textStyle,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = if (clipReady || expanded || (canFold.not() && bubbleWidth > 0)) {
-                                Int.MAX_VALUE
-                            } else {
-                                UserMessageFoldLines
-                            },
-                            overflow = TextOverflow.Clip,
-                            onTextLayout = { textLayout = it },
                             modifier = Modifier
-                                .wrapContentHeight(align = Alignment.Top, unbounded = true)
-                                .onGloballyPositioned { textOrigin = it.positionInWindow() }
-                                .drawBehind {
-                                    val layout = textLayout ?: return@drawBehind
-                                    if (!selecting) return@drawBehind
-                                    val rect = selectionRect(layout, selStart, selEnd)
-                                    if (rect == androidx.compose.ui.geometry.Rect.Zero) return@drawBehind
-                                    drawPath(
-                                        layout.getPathForRange(
-                                            minOf(selStart, selEnd).coerceIn(0, text.length),
-                                            maxOf(selStart, selEnd).coerceIn(0, text.length),
-                                        ),
-                                        SelectionHighlightColor,
-                                    )
-                                }
-                                .pointerInput(item.message.id, selecting, expanded, showMenu, text) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            if (selecting) selecting = false
-                                            else if (!showMenu && text.isNotBlank()) onRequestEdit(text)
-                                        },
-                                        onLongPress = { local ->
-                                            pressLocal = local
-                                            selecting = false
-                                            showMenu = true
-                                        },
-                                    )
-                                },
+                                .align(Alignment.BottomEnd)
+                                .padding(end = 8.dp, bottom = 6.dp)
+                                .zIndex(5f),
                         )
-                        if (canFold && expanded) {
-                            Spacer(Modifier.height(26.dp))
-                        }
-                        }
                     }
-                }
-            }
-            if (canFold) {
-                UserMessageFoldButton(
-                    expanded = expanded,
-                    dark = dark,
-                    onClick = {
-                        val expanding = !expanded
-                        selecting = false
-                        expanded = expanding
-                        onFold(expanding)
-                    },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 8.dp, bottom = 6.dp)
-                        .zIndex(5f),
-                )
-            }
-            val layout = textLayout
-            if (selecting && layout != null && text.isNotBlank()) {
-                val textInBox = textOrigin - boxOrigin
-                SelectionDragLayer(
-                    textInBox = textInBox,
-                    layout = layout,
-                    textLength = text.length,
-                    start = selStart,
-                    end = selEnd,
-                    onStart = { selStart = it },
-                    onEnd = { selEnd = it },
-                    onDismiss = { selecting = false },
-                    modifier = Modifier
-                        .matchParentSize()
-                        .zIndex(3f),
-                )
-                val startAnchor = selectionHandleAnchor(layout, selStart, isStart = true)
-                val endAnchor = selectionHandleAnchor(layout, selEnd, isStart = false)
-                SelectionHandleMark(
-                    anchorInParent = textInBox + startAnchor.hotspot,
-                    isLeft = startAnchor.isLeft,
-                    modifier = Modifier.zIndex(4f),
-                )
-                SelectionHandleMark(
-                    anchorInParent = textInBox + endAnchor.hotspot,
-                    isLeft = endAnchor.isLeft,
-                    modifier = Modifier.zIndex(4f),
-                )
-                val bounds = selectionRect(layout, selStart, selEnd)
-                val handlePx = with(density) { SelectionHandleSize.toPx() }
-                SelectionActionBar(
-                    centerXInWindow = textOrigin.x + bounds.center.x,
-                    bottomInWindow = textOrigin.y + selectionChromeBottom(layout, selStart, selEnd, handlePx),
-                    onCopy = {
-                        val a = minOf(selStart, selEnd).coerceIn(0, text.length)
-                        val b = maxOf(selStart, selEnd).coerceIn(0, text.length)
-                        if (b > a) {
-                            clipboard.setText(AnnotatedString(text.substring(a, b)))
-                            onCopied()
-                        }
-                    },
-                    onSelectAll = {
-                        selStart = 0
-                        selEnd = text.length
-                        expanded = true
-                    },
-                    copyLabel = copyLabel,
-                    selectAllLabel = selectAllLabel,
-                    copyIcon = UiR.drawable.ic_copy_outline,
-                    selectAllIcon = UiR.drawable.ic_select_all_outline_20,
-                )
-            }
-            if (showMenu) {
-                val actions = buildList {
-                    add(
-                        MessageAction(UiR.drawable.ic_copy_outline, copyLabel) {
-                            clipboard.setText(AnnotatedString(text))
-                            onCopied()
-                            showMenu = false
-                        },
-                    )
-                    if (text.isNotBlank()) {
-                        add(
-                            MessageAction(UiR.drawable.ic_select_outline, selectTextLabel) {
-                                showMenu = false
-                                val range = if (expanded) {
-                                    val offset = textLayout?.getOffsetForPosition(pressLocal) ?: 0
-                                    paragraphRangeAt(text, offset)
-                                } else {
-                                    firstParagraphRange(text)
-                                }
-                                if (range.second > range.first) {
-                                    selStart = range.first
-                                    selEnd = range.second
-                                    selecting = true
+                    val layout = textLayout
+                    if (selecting && layout != null && text.isNotBlank()) {
+                        val textInBox = textOrigin - boxOrigin
+                        SelectionDragLayer(
+                            textInBox = textInBox,
+                            layout = layout,
+                            textLength = text.length,
+                            start = selStart,
+                            end = selEnd,
+                            onStart = { selStart = it },
+                            onEnd = { selEnd = it },
+                            onDismiss = { selecting = false },
+                            modifier = Modifier
+                                .matchParentSize()
+                                .zIndex(3f),
+                        )
+                        val startAnchor = selectionHandleAnchor(layout, selStart, isStart = true)
+                        val endAnchor = selectionHandleAnchor(layout, selEnd, isStart = false)
+                        SelectionHandleMark(
+                            anchorInParent = textInBox + startAnchor.hotspot,
+                            isLeft = startAnchor.isLeft,
+                            modifier = Modifier.zIndex(4f),
+                        )
+                        SelectionHandleMark(
+                            anchorInParent = textInBox + endAnchor.hotspot,
+                            isLeft = endAnchor.isLeft,
+                            modifier = Modifier.zIndex(4f),
+                        )
+                        val bounds = selectionRect(layout, selStart, selEnd)
+                        val handlePx = with(density) { SelectionHandleSize.toPx() }
+                        SelectionActionBar(
+                            centerXInWindow = textOrigin.x + bounds.center.x,
+                            bottomInWindow = textOrigin.y + selectionChromeBottom(layout, selStart, selEnd, handlePx),
+                            onCopy = {
+                                val a = minOf(selStart, selEnd).coerceIn(0, text.length)
+                                val b = maxOf(selStart, selEnd).coerceIn(0, text.length)
+                                if (b > a) {
+                                    clipboard.setText(AnnotatedString(text.substring(a, b)))
+                                    onCopied()
                                 }
                             },
+                            onSelectAll = {
+                                selStart = 0
+                                selEnd = text.length
+                                expanded = true
+                            },
+                            copyLabel = copyLabel,
+                            selectAllLabel = selectAllLabel,
+                            copyIcon = UiR.drawable.ic_copy_outline,
+                            selectAllIcon = UiR.drawable.ic_select_all_outline_20,
                         )
                     }
-                    add(
-                        MessageAction(UiR.drawable.ic_edit_outline_20, modifyLabel) {
-                            showMenu = false
-                            if (text.isNotBlank()) onRequestEdit(text)
-                        },
-                    )
-                    add(
-                        MessageAction(UiR.drawable.ic_share_outline_20, shareLabel) {
-                            shareText(context, text)
-                            showMenu = false
-                        },
-                    )
+                    if (showMenu) {
+                        val actions = buildList {
+                            add(
+                                MessageAction(UiR.drawable.ic_copy_outline, copyLabel) {
+                                    clipboard.setText(AnnotatedString(text))
+                                    onCopied()
+                                    showMenu = false
+                                },
+                            )
+                            if (text.isNotBlank()) {
+                                add(
+                                    MessageAction(UiR.drawable.ic_select_outline, selectTextLabel) {
+                                        showMenu = false
+                                        val range = if (expanded) {
+                                            val offset = textLayout?.getOffsetForPosition(pressLocal) ?: 0
+                                            paragraphRangeAt(text, offset)
+                                        } else {
+                                            firstParagraphRange(text)
+                                        }
+                                        if (range.second > range.first) {
+                                            selStart = range.first
+                                            selEnd = range.second
+                                            selecting = true
+                                        }
+                                    },
+                                )
+                            }
+                            add(
+                                MessageAction(UiR.drawable.ic_edit_outline_20, modifyLabel) {
+                                    showMenu = false
+                                    if (text.isNotBlank()) onRequestEdit(text)
+                                },
+                            )
+                            add(
+                                MessageAction(UiR.drawable.ic_share_outline_20, shareLabel) {
+                                    shareText(context, text)
+                                    showMenu = false
+                                },
+                            )
+                        }
+                        MessageActionPopup(
+                            pressInWindow = textOrigin + pressLocal,
+                            actions = actions,
+                            onDismiss = { showMenu = false },
+                        )
+                    }
                 }
-                MessageActionPopup(
-                    pressInWindow = textOrigin + pressLocal,
-                    actions = actions,
-                    onDismiss = { showMenu = false },
-                )
+            } else if (retryHint != null) {
+                FailureHint(retryHint)
             }
         }
-        if (item.versionCount > 1) {
+        if (hasBubble && retryHint != null) {
+            FailureHint(
+                retryHint,
+                Modifier.padding(start = ChatMessageGutter, end = ChatMessageGutter, top = 6.dp),
+            )
+        }
+        if (item.versionCount > 1 && (hasBubble || retryHint != null)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 androidx.compose.material3.IconButton(
                     onClick = { onSwitchVersion(-1) },
@@ -436,6 +490,17 @@ private fun UserMessageRow(
             }
         }
     }
+}
+
+@Composable
+private fun FailureHint(message: String, modifier: Modifier = Modifier) {
+    Text(
+        text = message,
+        modifier = modifier,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.End,
+    )
 }
 
 /** 官方按 8 行测量收起高度，再用 300ms 把气泡高度收到这个值。 */
@@ -722,22 +787,43 @@ private fun trimSize(value: Double): String {
 @Composable
 private fun UserAttachments(
     attachments: List<Attachment>,
-    onOpenImage: (String) -> Unit,
+    onOpenImage: (Attachment) -> Unit,
 ) {
     if (attachments.isEmpty()) return
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 6.dp)) {
-        attachments.forEach { att ->
-            val path = att.localPath ?: return@forEach
-            AsyncImage(
-                model = File(path),
-                contentDescription = att.displayName,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(160.dp)
-                    .sharedPreviewImage(path)
-                    .clip(RoundedCornerShape(12.dp))
-                    .clickable { onOpenImage(path) },
-            )
+    val canClaimEdgeSwipe = LocalImagePreview.current?.path == null
+    BoxWithConstraints(
+        Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.TopEnd,
+    ) {
+        val multiple = attachments.size > 1
+        val contentWidth = maxWidth - ChatMessageGutter * 2
+        val gap = 8.dp
+        val edge = if (multiple) minOf(84.dp, (contentWidth - gap) / 2) else minOf(240.dp, contentWidth)
+        if (edge <= 0.dp) return@BoxWithConstraints
+        val rowModifier = Modifier.padding(bottom = 8.dp)
+        Row(
+            modifier = if (attachments.size > 2) {
+                rowModifier.fillMaxWidth()
+                    .then(if (canClaimEdgeSwipe) Modifier.systemGestureExclusion() else Modifier)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = ChatMessageGutter)
+            } else {
+                rowModifier.padding(horizontal = ChatMessageGutter)
+            },
+            horizontalArrangement = Arrangement.spacedBy(gap, Alignment.End),
+        ) {
+            attachments.forEach { att ->
+                val path = att.localPath ?: return@forEach
+                key(att.id) {
+                    AttachmentThumbnail(
+                        path = path,
+                        description = att.displayName,
+                        maxEdge = edge,
+                        square = multiple,
+                        onClick = { onOpenImage(att) },
+                    )
+                }
+            }
         }
     }
 }
@@ -752,10 +838,13 @@ private fun AssistantMessageRow(
     onCopied: () -> Unit,
     autoCollapseThinking: Boolean,
     onContinue: (() -> Unit)?,
+    onNewChat: () -> Unit,
+    recoveryShownWithUser: Boolean,
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val text = item.blocks.filterIsInstance<ReplyBlock.Text>().joinToString("\n") { it.text }
+    val hasRecovery = !streaming && (item.message.status == ReplyStatus.ERROR || item.message.status == ReplyStatus.INTERRUPTED)
     var showMenu by remember { mutableStateOf(false) }
     val selection = remember(item.message.id) { RenderedSelectionController() }
     var columnOrigin by remember { mutableStateOf(Offset.Zero) }
@@ -925,7 +1014,7 @@ private fun AssistantMessageRow(
                         )
                     }
                     if (!streaming) {
-                        add(
+                        if (!hasRecovery) add(
                             MessageAction(UiR.drawable.ic_regenerate_outline_24, regenerateLabel) {
                                 showMenu = false
                                 onRegenerate()
@@ -955,19 +1044,38 @@ private fun AssistantMessageRow(
             }
         }
 
+        val requestLimit = item.blocks.firstNotNullOfOrNull(ChatRequestLimit::fromBlock)
         when {
             streaming && item.blocks.isEmpty() -> TypingIndicator()
             item.message.status == ReplyStatus.REFUSED -> RefusalCard()
+            recoveryShownWithUser -> Unit
             item.message.status == ReplyStatus.INTERRUPTED -> StatusBanner(
-                stringResource(UiR.string.reply_interrupted), retryable = true, onRetry = onRegenerate,
+                stringResource(UiR.string.check_network_retry), onAction = onRegenerate,
             )
+            item.message.status == ReplyStatus.ERROR && requestLimit != null -> {
+                val message = when (requestLimit) {
+                    ChatRequestLimit.CONTEXT -> stringResource(UiR.string.context_limit_reached)
+                    ChatRequestLimit.DOCUMENT_COUNT -> stringResource(
+                        UiR.string.document_reference_limit_server, MAX_DOCUMENT_REFERENCES,
+                    )
+                    ChatRequestLimit.DOCUMENT_TEXT -> stringResource(UiR.string.document_text_limit)
+                    ChatRequestLimit.FILE_UNAVAILABLE -> stringResource(UiR.string.file_unavailable)
+                }
+                val canReupload = requestLimit == ChatRequestLimit.FILE_UNAVAILABLE
+                StatusBanner(
+                    message,
+                    onAction = if (canReupload) onRegenerate else onNewChat,
+                    actionLabel = stringResource(if (canReupload) UiR.string.reupload_file else UiR.string.start_new_chat),
+                    actionIcon = if (canReupload) UiR.drawable.ic_regenerate_outline_24 else UiR.drawable.ic_new_chat_outline_24,
+                )
+            }
             item.message.status == ReplyStatus.ERROR -> StatusBanner(
-                stringResource(UiR.string.generation_failed), retryable = true, onRetry = onRegenerate,
+                stringResource(UiR.string.generation_failed), onAction = onRegenerate,
             )
             !streaming && item.message.status == ReplyStatus.STOPPED -> StoppedContinueRow(onContinue)
         }
 
-        if (!streaming) {
+        if (!streaming && (!hasRecovery || text.isNotBlank())) {
             val iconTint = MaterialTheme.colorScheme.onSurfaceVariant
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -994,13 +1102,15 @@ private fun AssistantMessageRow(
                     tint = iconTint,
                     onClick = { shareText(context, text) },
                 )
-                Spacer(Modifier.weight(1f))
-                MessageActionIcon(
-                    icon = UiR.drawable.ic_regenerate_outline_24,
-                    contentDescription = stringResource(UiR.string.regenerate),
-                    tint = iconTint,
-                    onClick = onRegenerate,
-                )
+                if (!hasRecovery) {
+                    Spacer(Modifier.weight(1f))
+                    MessageActionIcon(
+                        icon = UiR.drawable.ic_regenerate_outline_24,
+                        contentDescription = stringResource(UiR.string.regenerate),
+                        tint = iconTint,
+                        onClick = onRegenerate,
+                    )
+                }
             }
         }
     }
@@ -1097,28 +1207,30 @@ private fun StoppedContinueRow(onContinue: (() -> Unit)?) {
 }
 
 @Composable
-fun StatusBanner(message: String, retryable: Boolean, onRetry: (() -> Unit)? = null) {
+private fun StatusBanner(
+    message: String,
+    onAction: () -> Unit,
+    actionLabel: String = stringResource(UiR.string.retry),
+    @DrawableRes actionIcon: Int = UiR.drawable.ic_regenerate_outline_24,
+) {
     Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
         ) {
             Text(
                 text = message,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
             )
-            if (retryable && onRetry != null) {
-                TextButton(onClick = onRetry) {
-                    Text(stringResource(UiR.string.retry), style = MaterialTheme.typography.labelMedium)
-                }
+            OutlinedButton(onClick = onAction) {
+                DsIcon(actionIcon, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(actionLabel)
             }
         }
     }

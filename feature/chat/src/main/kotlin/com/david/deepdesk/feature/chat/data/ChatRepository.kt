@@ -239,6 +239,13 @@ class ChatRepository(
         blockDao.replaceForMessage(messageId, blocks.mapIndexed { i, b -> b.toEntity(messageId, i) })
     }
 
+    suspend fun finishMessage(messageId: String, blocks: List<ReplyBlock>, status: ReplyStatus) {
+        db.withTransaction {
+            replaceBlocks(messageId, blocks)
+            updateMessageStatus(messageId, status)
+        }
+    }
+
     /** 分支切换：父消息指向指定子节点 */
     suspend fun selectChild(parentId: String?, childId: String, sessionId: String) {
         db.withTransaction {
@@ -265,8 +272,21 @@ class ChatRepository(
 
     suspend fun insertAttachment(attachment: Attachment) = attachmentDao.upsert(attachment.toEntity())
 
+    suspend fun replacePendingAttachment(originalId: String, replacement: Attachment): Boolean = db.withTransaction {
+        val original = attachmentDao.get(originalId) ?: return@withTransaction false
+        if (original.messageId != null || original.sessionId != replacement.sessionId ||
+            original.uploadState == UploadState.UPLOADING.name
+        ) return@withTransaction false
+        attachmentDao.upsert(replacement.toEntity())
+        attachmentDao.delete(originalId)
+        true
+    }
+
     suspend fun updateAttachmentUpload(id: String, state: UploadState, fileId: String?, progress: Int, error: String?) =
         attachmentDao.updateUpload(id, state.name, fileId, progress, error)
+
+    suspend fun replaceServerFileId(sessionId: String, oldId: String, newId: String) =
+        attachmentDao.replaceServerFileId(sessionId, oldId, newId)
 
     suspend fun getAttachments(sessionId: String): List<Attachment> =
         attachmentDao.getBySession(sessionId).map { it.toDomain() }

@@ -2,11 +2,11 @@
 
 [简体中文](README.zh-CN.md)
 
-## Download 1.2.2
+## Download 1.3.0
 
-- [Android APK](https://github.com/david1025/deepdesk-android/releases/download/v1.2.2/DeepDesk-1.2.2.apk) for Android 8.0 and later
+- [Android APK](https://github.com/david1025/deepdesk-android/releases/download/v1.3.0/DeepDesk-1.3.0.apk) for Android 8.0 and later
 
-[Release notes](https://github.com/david1025/deepdesk-android/releases/tag/v1.2.2)
+[Release notes](https://github.com/david1025/deepdesk-android/releases/tag/v1.3.0)
 
 The desktop client for Windows and macOS is [david1025/deepdesk](https://github.com/david1025/deepdesk).
 

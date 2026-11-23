@@ -129,8 +129,8 @@ private fun appendToolRun(out: MutableList<TracePiece>, run: List<ReplyBlock>) {
     when {
         hits.isNotEmpty() -> out += TracePiece.Searched(hits, running = false)
         searchRunning -> out += TracePiece.Searched(emptyList(), running = true)
-        else -> searches.firstNotNullOfOrNull { it.errorCode }?.let { out += TracePiece.SearchFailed(it) }
     }
+    searches.firstNotNullOfOrNull { it.errorCode }?.let { out += TracePiece.SearchFailed(it) }
 
     val fetches = run.filterIsInstance<ReplyBlock.WebFetchResult>()
     val pages = fetches.mapNotNull { result ->

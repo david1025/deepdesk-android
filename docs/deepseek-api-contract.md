@@ -10,7 +10,7 @@
 - **请求**（`RequestFactory` 统一生成）：
   - `model`: 默认 `deepseek-flash`。设置里的专业模式关闭时固定这个值；开启后从 `GET /models` 列出模型并写入所选 id。展示名用返回的 `name`。`input_modalities` 含 `image` 才支持视觉，否则客户端拒绝图片
   - `system`: 「你是由 DeepSeek 模型提供能力的 AI 助手。本应用是独立第三方客户端。」
-  - `messages`: 活跃分支历史 + 新消息。文档附件为 `[{type:"text"},{type:"file",file_id}]`；图片必须是 `{type:"image",source:{type:"file",file_id}}`，不能用顶层 `type:"file"`
+  - `messages`: 活跃分支历史 + 新消息。Flash 请求回传已完整保存的历史联网工具回复，保留块顺序、`kind` 和 `signature`，与当前工具开关无关。服务端用有效的 `read_link` 签名恢复网页，普通搜索结果和深度搜索打开的网页仍只保留回答正文。旧记录或无原始块的记录回退到正文。文档附件为 `{type:"document",source:{type:"file",file_id}}`；图片为 `{type:"image",source:{type:"file",file_id}}`。
   - `thinking`: `{type: enabled|disabled}`（深度思考开关）
   - `output_config`: 仅专业模式且深度思考开启时发送 `{effort: low|high|max}`。关闭专业模式时不出现该字段
   - `tools`: `deepseek_web_search` / `deepseek_read_url`（按开关与 URL 检测决定）
@@ -33,7 +33,7 @@
 - **purpose 表**（§5.6）：图片/jpeg/png/gif/webp → `user_data`；PDF → `rich_layout_recognition`（图文混排）；Office → `text_recognition`；文本/表格/电子书 → `user_data`。
 - **大小上限**：图片 64 MiB；PDF/Office 100 MiB；文本/表格/电子书 32 MiB。本地预检（AttachmentTypeResolver），超限不上传。
 - **删除**：`DELETE /anthropic/v1/files/{file_id}`（显式远端清理）。
-- **消息引用**：文档 `{"type":"file","file_id":"..."}`；图片 `{"type":"image","source":{"type":"file","file_id":"..."}}`。附件记录持久化 `apiProtocol=ANTHROPIC_FILES`。
+- **消息引用**：文档 `{"type":"document","source":{"type":"file","file_id":"..."}}`；图片 `{"type":"image","source":{"type":"file","file_id":"..."}}`。附件记录持久化 `apiProtocol=ANTHROPIC_FILES`。
 
 ## 3. ASR（F11）
 

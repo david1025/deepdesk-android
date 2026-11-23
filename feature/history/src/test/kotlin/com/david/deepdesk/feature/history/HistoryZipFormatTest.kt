@@ -102,6 +102,7 @@ class HistoryZipFormatTest {
         assertTrue(encoded.contains("\"type\":\"THINK\""))
         assertTrue(encoded.contains("\"type\":\"TOOL_SEARCH\""))
         assertTrue(encoded.contains("https://example.com/icon.png"))
+        assertTrue(HistoryZipFormat.encodeSessionJson(again).contains("https://example.com/image.jpg"))
     }
 
     @Test
@@ -186,7 +187,7 @@ class HistoryZipFormatTest {
     private fun officialSessionJson(withSearch: Boolean = false): String {
         val search = if (withSearch) {
             """
-            ,{"type":"TOOL_SEARCH","queries":["天气"],"results":[{"url":"https://example.com","title":"天气","snippet":"晴","site_name":"示例","site_icon":"https://example.com/icon.png"}]}
+            ,{"type":"TOOL_SEARCH","queries":["天气"],"results":[{"url":"https://example.com","title":"天气","snippet":"晴","site_name":"示例","site_icon":"https://example.com/icon.png","image_url":"https://example.com/image.jpg"}]}
             """.trimIndent()
         } else {
             ""

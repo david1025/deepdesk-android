@@ -48,19 +48,28 @@ class AttachmentManager(
         val safeName = "${id}_${displayName.replace(Regex("[/\\\\:*?\"<>|]"), "_")}"
         val dest = File(dir, safeName)
 
+        var complete = false
         try {
             resolver.openInputStream(uri)?.use { input ->
-                dest.outputStream().use { output -> input.copyTo(output) }
+                dest.outputStream().use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count == -1) break
+                        total += count
+                        if (total > cls.maxBytes) {
+                            throw AppError(AppError.Kind.PAYLOAD_TOO_LARGE, AttachmentTypeResolver.friendlyLimit(cls))
+                        }
+                        output.write(buffer, 0, count)
+                    }
+                }
             } ?: throw AppError(AppError.Kind.LOCAL, "无法读取所选文件")
+            complete = true
         } catch (e: IOException) {
-            dest.delete()
             throw AppError(AppError.Kind.LOCAL, "文件读取失败")
-        }
-
-        val size = dest.length()
-        if (size > cls.maxBytes) {
-            dest.delete()
-            throw AppError(AppError.Kind.PAYLOAD_TOO_LARGE, AttachmentTypeResolver.friendlyLimit(cls))
+        } finally {
+            if (!complete) dest.delete()
         }
 
         return Attachment(
@@ -70,13 +79,39 @@ class AttachmentManager(
             localUri = uri.toString(),
             mimeType = cls.mimeType,
             displayName = displayName,
-            sizeBytes = size,
+            sizeBytes = dest.length(),
             purpose = cls.purpose,
             apiProtocol = ApiProtocol.ANTHROPIC_FILES,
             uploadState = UploadState.LOCAL,
             isImage = cls.isImage,
             createdAt = time.nowMillis(),
         )
+    }
+
+    fun cropImageBlocking(source: Attachment, crop: ImageCrop, sessionId: String): Attachment {
+        val original = source.localPath?.let(::File)?.takeIf { it.isFile }
+            ?: throw IOException("Image is unavailable")
+        val id = time.newId()
+        val directory = File(context.filesDir, "attachments/$sessionId").apply { mkdirs() }
+        val destination = File(directory, "${id}_crop.png")
+        var complete = false
+        try {
+            ImageRegionRenderer.writePng(original, crop, destination)
+            complete = true
+            return Attachment(
+                id = id,
+                sessionId = sessionId,
+                localPath = destination.absolutePath,
+                mimeType = "image/png",
+                displayName = "${source.displayName.substringBeforeLast('.')}-crop.png",
+                sizeBytes = destination.length(),
+                purpose = "user_data",
+                isImage = true,
+                createdAt = if (source.messageId == null) source.createdAt else time.nowMillis(),
+            )
+        } finally {
+            if (!complete) destination.delete()
+        }
     }
 
     /** 上传单个附件（阻塞），进度回调由调用方节流更新 UI */

@@ -77,6 +77,18 @@ class ThinkingTraceTest {
         assertTrue(searched.hits.isEmpty())
     }
 
+    @Test
+    fun `同一段思考中同时保留搜索结果和失败提示`() {
+        val hits = listOf(SearchHit(url = "https://example.com"))
+        val pieces = tracePieces(
+            listOf(
+                ReplyBlock.WebSearchResult("failed", errorCode = "unavailable"),
+                ReplyBlock.WebSearchResult("success", hits = hits),
+            ),
+        )
+        assertEquals(listOf(TracePiece.Searched(hits, running = false), TracePiece.SearchFailed("unavailable")), pieces)
+    }
+
     private fun searchUse(running: Boolean = false) = ReplyBlock.ServerToolUse(
         toolUseId = "s",
         name = "web_search",

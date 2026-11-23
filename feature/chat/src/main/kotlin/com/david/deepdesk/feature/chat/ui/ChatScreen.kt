@@ -61,6 +61,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -74,12 +75,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.SnackbarResult
 import com.david.deepdesk.core.common.AppError
+import com.david.deepdesk.core.model.ReplyBlock
 import com.david.deepdesk.core.model.ReplyStatus
 import com.david.deepdesk.core.ui.DsIcon
 import com.david.deepdesk.core.ui.LocalCenterHint
 import com.david.deepdesk.core.ui.R as UiR
 import com.david.deepdesk.feature.chat.ChatUiState
 import com.david.deepdesk.feature.chat.ChatViewModel
+import com.david.deepdesk.feature.chat.engine.ChatRequestLimit
 import com.david.deepdesk.feature.voice.recording.RecordingController
 import com.david.deepdesk.feature.voice.tts.TtsPlayer
 import kotlinx.coroutines.Job
@@ -98,8 +101,10 @@ import kotlinx.coroutines.launch
 fun ChatScreen(
     viewModel: ChatViewModel,
     sessionId: String?,
+    imagePreview: ImagePreviewController,
     onOpenDrawer: () -> Unit,
     onNewChat: () -> Unit,
+    onOpenCroppedDraft: (String) -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val ui by viewModel.ui.collectAsState()
@@ -182,7 +187,11 @@ fun ChatScreen(
         if (granted) launchCamera()
     }
 
-    val imagePreview = remember { ImagePreviewController() }
+    val downloadImage = rememberImageDownload()
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(imagePreview.expanded) {
+        if (imagePreview.expanded) keyboard?.hide()
+    }
     SharedTransitionLayout(Modifier.fillMaxSize()) {
         CompositionLocalProvider(
             LocalImagePreview provides imagePreview,
@@ -255,6 +264,7 @@ fun ChatScreen(
                                 onSaveAnchor = viewModel::saveScrollAnchor,
                                 onCopied = { copiedHint = context.getString(UiR.string.copied) },
                                 onOpenSettings = onOpenSettings,
+                                onNewChat = onNewChat,
                                 onContinue = viewModel::continueGeneration,
                             )
                         }
@@ -348,7 +358,11 @@ fun ChatScreen(
         }
     }
             if (imagePreview.path != null) {
-                ImageExpandPreview(imagePreview)
+                ImageExpandPreview(imagePreview, onDownload = downloadImage) { attachment, crop ->
+                    val draftId = viewModel.useImageRegion(attachment.id, crop)
+                    if (draftId != null && draftId != viewModel.ui.value.sessionId) onOpenCroppedDraft(draftId)
+                    draftId != null
+                }
             }
         }
     }
@@ -365,6 +379,13 @@ fun ChatScreen(
         if (err.kind == AppError.Kind.AUTH) {
             val result = snackbar.showSnackbar(err.message, actionLabel = context.getString(UiR.string.go_to_settings))
             if (result == SnackbarResult.ActionPerformed) onOpenSettings()
+        } else if (err.kind == AppError.Kind.CONTEXT_LIMIT) {
+            val result = snackbar.showSnackbar(
+                err.message,
+                actionLabel = context.getString(UiR.string.start_new_chat),
+                withDismissAction = true,
+            )
+            if (result == SnackbarResult.ActionPerformed) onNewChat()
         } else {
             snackbar.showSnackbar(err.message)
         }
@@ -450,6 +471,7 @@ private fun MessageList(
     onSaveAnchor: (String?, Int) -> Unit,
     onCopied: () -> Unit,
     onOpenSettings: () -> Unit,
+    onNewChat: () -> Unit,
     onContinue: (String) -> Unit,
 ) {
     val listState = rememberLazyListState()
@@ -688,30 +710,37 @@ private fun MessageList(
             ) {
                 item(key = "header") { Spacer(Modifier.height(8.dp)) }
                 itemsIndexed(renderItems, key = { _, item -> item.id }) { index, item ->
-                    Box(Modifier.padding(horizontal = 16.dp)) {
-                        when (item) {
-                            is RenderItem.Message -> MessageRow(
-                                item = item.uiMessage,
-                                streaming = ui.streamingDraft?.assistantMessageId == item.uiMessage.message.id,
-                                isSpeaking = isSpeakingId == item.uiMessage.message.id,
-                                onRegenerate = { onRegenerate(item.uiMessage.message.id) },
-                                onSwitchVersion = { direction -> onSwitchVersion(item.uiMessage.message.id, direction) },
-                                versionsEnabled = !ui.isStreaming,
-                                onRequestEdit = { text -> onBeginEdit(item.uiMessage.message.id, text) },
-                                onUserFold = { expanding -> onUserFold(item.uiMessage.message.id, expanding) },
-                                onToggleTts = { onToggleTts(item.uiMessage.message.id) },
-                                onCopied = onCopied,
-                                autoCollapseThinking = ui.autoCollapseThinking,
-                                onContinue = if (
-                                    item.uiMessage.message.status == ReplyStatus.STOPPED &&
-                                    item.uiMessage.message.id == renderItems.lastOrNull()?.id
-                                ) {
-                                    { onContinue(item.uiMessage.message.id) }
-                                } else {
-                                    null
-                                },
-                            )
-                            is RenderItem.Stream -> StreamPlaceholder(
+                    when (item) {
+                        is RenderItem.Message -> MessageRow(
+                            item = item.uiMessage,
+                            streaming = ui.streamingDraft?.assistantMessageId == item.uiMessage.message.id,
+                            isSpeaking = isSpeakingId == item.uiMessage.message.id,
+                            onRegenerate = { onRegenerate(item.uiMessage.message.id) },
+                            retryHint = item.failedReply?.let { stringResource(it.hint) },
+                            retryLabel = item.failedReply?.let { stringResource(it.actionLabel) },
+                            onRetryMessage = item.failedReply?.takeUnless { ui.isStreaming }?.let { failure ->
+                                { onRegenerate(failure.messageId) }
+                            },
+                            recoveryShownWithUser = item.recoveryShownWithUser,
+                            onNewChat = onNewChat,
+                            onSwitchVersion = { direction -> onSwitchVersion(item.uiMessage.message.id, direction) },
+                            versionsEnabled = !ui.isStreaming,
+                            onRequestEdit = { text -> onBeginEdit(item.uiMessage.message.id, text) },
+                            onUserFold = { expanding -> onUserFold(item.uiMessage.message.id, expanding) },
+                            onToggleTts = { onToggleTts(item.uiMessage.message.id) },
+                            onCopied = onCopied,
+                            autoCollapseThinking = ui.autoCollapseThinking,
+                            onContinue = if (
+                                item.uiMessage.message.status == ReplyStatus.STOPPED &&
+                                item.uiMessage.message.id == renderItems.lastOrNull()?.id
+                            ) {
+                                { onContinue(item.uiMessage.message.id) }
+                            } else {
+                                null
+                            },
+                        )
+                        is RenderItem.Stream -> Box(Modifier.padding(horizontal = ChatMessageGutter)) {
+                            StreamPlaceholder(
                                 draft = item.draft,
                                 autoCollapseThinking = ui.autoCollapseThinking,
                             )
@@ -749,7 +778,11 @@ private fun MessageList(
 private sealed interface RenderItem {
     val id: String
 
-    data class Message(val uiMessage: com.david.deepdesk.feature.chat.UiMessage) : RenderItem {
+    data class Message(
+        val uiMessage: com.david.deepdesk.feature.chat.UiMessage,
+        val failedReply: FailedReply? = null,
+        val recoveryShownWithUser: Boolean = false,
+    ) : RenderItem {
         override val id: String get() = uiMessage.message.id
     }
 
@@ -758,14 +791,39 @@ private sealed interface RenderItem {
     }
 }
 
+private data class FailedReply(val messageId: String, val hint: Int, val actionLabel: Int = UiR.string.retry)
+
 private fun buildRenderItems(ui: ChatUiState): List<RenderItem> {
     val items = mutableListOf<RenderItem>()
     val draft = ui.streamingDraft
+    val failedReplies = ui.messages.zipWithNext().mapNotNull { (user, reply) ->
+        if (user.message.role != "user" || reply.message.role != "assistant" ||
+            reply.message.parentId != user.message.id || reply.message.id == draft?.assistantMessageId
+        ) return@mapNotNull null
+        val limit = reply.blocks.firstNotNullOfOrNull(ChatRequestLimit::fromBlock)
+        val failure = when (reply.message.status) {
+            ReplyStatus.INTERRUPTED -> FailedReply(reply.message.id, UiR.string.check_network_retry)
+            ReplyStatus.ERROR -> when (limit) {
+                null -> FailedReply(reply.message.id, UiR.string.generation_failed)
+                ChatRequestLimit.FILE_UNAVAILABLE -> FailedReply(
+                    reply.message.id, UiR.string.file_unavailable, UiR.string.reupload_file,
+                )
+                else -> null
+            }
+            else -> null
+        }
+        failure?.let { user.message.id to it }
+    }.toMap()
+    val inlineFailureIds = failedReplies.values.map { it.messageId }.toSet()
     ui.messages.forEach { msg ->
+        val recoveryShownWithUser = msg.message.id in inlineFailureIds
+        if (recoveryShownWithUser && msg.blocks.all { it is ReplyBlock.Raw }) {
+            return@forEach
+        }
         if (draft != null && draft.assistantMessageId == msg.message.id) {
             items.add(RenderItem.Message(msg.copy(blocks = draft.blocks)))
         } else {
-            items.add(RenderItem.Message(msg))
+            items.add(RenderItem.Message(msg, failedReplies[msg.message.id], recoveryShownWithUser))
         }
     }
     if (draft != null && ui.messages.none { it.message.id == draft.assistantMessageId }) {

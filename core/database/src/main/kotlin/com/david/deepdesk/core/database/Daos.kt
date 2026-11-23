@@ -175,6 +175,9 @@ interface AttachmentDao {
     @Query("UPDATE attachments SET uploadState = :state, serverFileId = :fileId, progressPercent = :progress, errorMessage = :error WHERE id = :id")
     suspend fun updateUpload(id: String, state: String, fileId: String?, progress: Int, error: String?)
 
+    @Query("UPDATE attachments SET serverFileId = :newId, uploadState = 'UPLOADED', progressPercent = 100, errorMessage = NULL WHERE sessionId = :sessionId AND serverFileId = :oldId")
+    suspend fun replaceServerFileId(sessionId: String, oldId: String, newId: String)
+
     @Query("DELETE FROM attachments WHERE id = :id")
     suspend fun delete(id: String)
 

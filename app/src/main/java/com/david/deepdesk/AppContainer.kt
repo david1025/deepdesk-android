@@ -54,7 +54,7 @@ class AppContainer(context: Context) {
     )
 
     val chatRepository: ChatRepository = ChatRepository(database, time)
-    val orchestrator: ChatOrchestrator = ChatOrchestrator(applicationScope, messageStreamClient, chatRepository, time)
+    val orchestrator = ChatOrchestrator(applicationScope, messageStreamClient, chatRepository, time, filesApiClient)
 
     val attachmentManager: AttachmentManager = AttachmentManager(context, filesApiClient, time)
     val recordingController: RecordingController = RecordingController(applicationScope)

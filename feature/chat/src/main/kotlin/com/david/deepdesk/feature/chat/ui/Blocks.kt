@@ -50,6 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -157,6 +158,10 @@ private fun ThinkingGroup(
         // 收起时只留标题。搜索卡片和阅读链接都在展开后的时间线里，不铺在正文前面。
         if (expanded && pieces.isNotEmpty()) {
             ThinkingTrace(pieces, traceColor)
+        } else {
+            pieces.filterIsInstance<TracePiece.SearchFailed>().distinct().forEach { failure ->
+                SearchFailureRow(failure.code)
+            }
         }
     }
 }
@@ -215,7 +220,7 @@ private fun ThinkingTrace(pieces: List<TracePiece>, color: Color) {
                         { sheet = TraceSheet.Browsed(piece.pages) }
                     },
                 )
-                is TracePiece.SearchFailed -> ToolErrorRow(stringResource(UiR.string.search_failed, piece.code))
+                is TracePiece.SearchFailed -> SearchFailureRow(piece.code)
                 is TracePiece.FetchFailed -> ToolErrorRow(stringResource(UiR.string.fetch_failed, piece.code))
             }
         }
@@ -329,7 +334,7 @@ private fun TraceResultSheet(sheet: TraceSheet, bottomInset: Dp, onDismiss: () -
     }
     val rows = when (sheet) {
         is TraceSheet.Search -> sheet.hits.map { hit ->
-            ResultLine(hit.url, hit.title, hit.snippet, hit.siteName, hit.siteIcon, hit.pageAge)
+            ResultLine(hit.url, hit.title, hit.snippet, hit.siteName, hit.siteIcon, hit.pageAge, hit.imageUrl)
         }
         is TraceSheet.Browsed -> sheet.pages.map { page ->
             ResultLine(page.url, page.title, page.snippet, page.siteName, page.siteIcon, page.pageAge)
@@ -440,6 +445,7 @@ private data class ResultLine(
     val siteName: String?,
     val siteIcon: String?,
     val pageAge: String?,
+    val imageUrl: String? = null,
 )
 
 @Composable
@@ -483,6 +489,7 @@ private fun ResultLineRow(line: ResultLine, onClick: () -> Unit) {
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        SearchResultImage(line.imageUrl, Modifier.padding(top = 6.dp))
         val snippet = line.snippet?.trim().orEmpty()
         if (snippet.isNotEmpty()) {
             Spacer(Modifier.height(4.dp))
@@ -546,10 +553,7 @@ private fun ServerToolUseBlock(block: ReplyBlock.ServerToolUse) {
 
 @Composable
 private fun WebSearchResultBlock(block: ReplyBlock.WebSearchResult) {
-    if (block.errorCode != null) {
-        ToolErrorRow(stringResource(UiR.string.search_failed, block.errorCode.orEmpty()))
-        return
-    }
+    block.errorCode?.let { SearchFailureRow(it) }
     if (block.hits.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         // 胶囊来源数量（对齐官方 App「N 个网页」）
@@ -573,6 +577,16 @@ private fun WebSearchResultBlock(block: ReplyBlock.WebSearchResult) {
             }
         }
     }
+}
+
+@Composable
+private fun SearchFailureRow(code: String) {
+    val message = when (code) {
+        "unavailable" -> UiR.string.search_unavailable
+        "too_many_requests" -> UiR.string.search_rate_limited
+        else -> UiR.string.search_failed
+    }
+    ToolErrorRow(stringResource(message))
 }
 
 @Composable
@@ -618,6 +632,7 @@ private fun SourceCard(hit: SearchHit) {
                 .clickable { com.david.deepdesk.core.ui.openHttpUrl(context, hit.url) }
                 .padding(10.dp),
         ) {
+            SearchResultImage(hit.imageUrl, Modifier.padding(bottom = 6.dp))
             Text(
                 text = hit.siteName ?: hit.url.substringAfter("://").substringBefore("/"),
                 style = MaterialTheme.typography.labelSmall,
@@ -645,6 +660,26 @@ private fun SourceCard(hit: SearchHit) {
             }
         }
     }
+}
+
+@Composable
+private fun SearchResultImage(url: String?, modifier: Modifier = Modifier) {
+    if (url.isNullOrBlank()) return
+    val uri = remember(url) { Uri.parse(url) }
+    if (uri.scheme?.lowercase() !in listOf("https", "http") || uri.host.isNullOrBlank()) return
+
+    var failed by remember(url) { mutableStateOf(false) }
+    if (failed) return
+    AsyncImage(
+        model = url,
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        onError = { failed = true },
+        modifier = modifier
+            .fillMaxWidth()
+            .height(112.dp)
+            .clip(RoundedCornerShape(8.dp)),
+    )
 }
 
 @Composable

@@ -224,6 +224,7 @@ object HistoryZipFormat {
                             snippet = o.str("snippet") ?: o.str("snippet_text") ?: o.str("cite_text"),
                             siteName = o.str("site_name") ?: o.str("cite_name"),
                             siteIcon = o.str("site_icon") ?: o.str("icon") ?: o.str("favicon"),
+                            imageUrl = o.str("image_url"),
                         )
                     }.orEmpty()
                     val toolId = "import_search_${messageId}_$i"
@@ -318,6 +319,7 @@ object HistoryZipFormat {
                                             hit.snippet?.let { put("snippet", JsonPrimitive(it)) }
                                             hit.siteName?.let { put("site_name", JsonPrimitive(it)) }
                                             hit.siteIcon?.let { put("site_icon", JsonPrimitive(it)) }
+                                            hit.imageUrl?.let { put("image_url", JsonPrimitive(it)) }
                                         },
                                     )
                                 }

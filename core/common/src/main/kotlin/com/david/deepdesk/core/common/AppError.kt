@@ -21,6 +21,8 @@ data class AppError(
         FORBIDDEN,
         /** 413 文件过大：显示格式对应上限，本地预检拦截 */
         PAYLOAD_TOO_LARGE,
+        /** 当前会话携带的上下文超过请求限制 */
+        CONTEXT_LIMIT,
         /** 429 限流：退避重试，避免重试风暴 */
         RATE_LIMIT,
         /** 5xx 服务端错误：可重试 */

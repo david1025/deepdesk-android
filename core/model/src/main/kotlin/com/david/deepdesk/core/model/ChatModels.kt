@@ -48,6 +48,7 @@ data class SearchHit(
     val siteName: String? = null,
     val siteIcon: String? = null,
     val pageAge: String? = null,
+    val imageUrl: String? = null,
 )
 
 /** 服务端工具块种类（对应 content_block type） */

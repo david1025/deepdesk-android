@@ -95,6 +95,21 @@ class MessageEventReducerTest {
     }
 
     @Test
+    fun `图片搜索结果的缩略图地址可落盘且兼容普通结果`() {
+        val reducer = MessageEventReducer()
+        feed(
+            reducer,
+            """{"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result","tool_use_id":"t1","kind":"image_search","content":[{"type":"web_search_result","url":"https://example.com/a","image_url":"https://example.com/image.jpg"},{"type":"web_search_result","url":"https://example.com/b"}]}}""",
+        )
+        val result = reducer.snapshot().blocks[0] as MessageEventReducer.DraftBlock.WebSearchResult
+        val stored = BlockJsonCodec.encodeSearchResult(result.hits, result.errorCode, ApiJson)
+        val (restored, _) = BlockJsonCodec.decodeSearchResult(stored, ApiJson)
+
+        assertEquals(listOf("https://example.com/image.jpg", null), restored.map { it.imageUrl })
+        assertEquals(listOf("https://example.com/a", "https://example.com/b"), restored.map { it.url })
+    }
+
+    @Test
     fun `搜索结果错误码正确记录`() {
         val reducer = MessageEventReducer()
         feed(
@@ -104,6 +119,34 @@ class MessageEventReducerTest {
         val result = reducer.snapshot().blocks[0] as MessageEventReducer.DraftBlock.WebSearchResult
         assertEquals("too_many_requests", result.errorCode)
         assertTrue(result.hits.isEmpty())
+    }
+
+    @Test
+    fun `搜索失败数组与正常空结果可以区分`() {
+        val reducer = MessageEventReducer()
+        feed(
+            reducer,
+            """{"type":"content_block_start","index":0,"content_block":{"type":"web_search_tool_result","tool_use_id":"t1","content":[{"type":"web_search_tool_result_error","error_code":"unavailable"}]}}""",
+            """{"type":"content_block_start","index":1,"content_block":{"type":"web_search_tool_result","tool_use_id":"t2","content":[]}}""",
+        )
+        val results = reducer.snapshot().blocks.filterIsInstance<MessageEventReducer.DraftBlock.WebSearchResult>()
+        assertEquals(listOf("unavailable", null), results.map { it.errorCode })
+        assertTrue(results.all { it.hits.isEmpty() })
+    }
+
+    @Test
+    fun `网页标题从文档内容读取并保留到历史`() {
+        val reducer = MessageEventReducer()
+        feed(
+            reducer,
+            """{"type":"content_block_start","index":0,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"t1","kind":"read_link","content":{"type":"web_fetch_result","url":"https://example.com/a","content":{"type":"document","title":"示例网页"}}}}""",
+            """{"type":"content_block_start","index":1,"content_block":{"type":"web_fetch_tool_result","tool_use_id":"t2","content":{"type":"web_fetch_result","url":"https://example.com/b","content":{"type":"document","title":null}}}}""",
+        )
+        val results = reducer.snapshot().blocks.filterIsInstance<MessageEventReducer.DraftBlock.WebFetchResult>()
+        val result = results.first()
+        val stored = BlockJsonCodec.encodeFetchResult(result.url, result.title, result.errorCode, ApiJson)
+        assertEquals(Triple("https://example.com/a", "示例网页", null), BlockJsonCodec.decodeFetchResult(stored, ApiJson))
+        assertEquals(null, results.last().title)
     }
 
     @Test

@@ -10,6 +10,7 @@ import com.david.deepdesk.core.model.ReplyStatus
 import com.david.deepdesk.core.model.SseEvent
 import com.david.deepdesk.core.model.StopReason
 import com.david.deepdesk.core.network.DeepSeekApiException
+import com.david.deepdesk.core.network.FilesApiClient
 import com.david.deepdesk.core.network.DeepSeekStreamErrorException
 import com.david.deepdesk.core.network.MessageStreamClient
 import com.david.deepdesk.feature.chat.data.ChatRepository
@@ -32,6 +33,7 @@ class ChatOrchestrator(
     private val streamClient: MessageStreamClient,
     private val repository: ChatRepository,
     private val time: TimeProvider,
+    private val filesClient: FilesApiClient,
 ) {
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -117,14 +119,14 @@ class ChatOrchestrator(
             } catch (e: DeepSeekStreamErrorException) {
                 AppLog.w(TAG, "流内业务错误: ${e.message}")
                 reducer.onEvent(
-                    SseEvent.Unknown("__failed__", json.encodeToString(FailureCarrier.serializer(), FailureCarrier(null, e.errorType, e.message)))
+                    failureEvent(null, e.errorType, e.message, e.requestId)
                 )
             } catch (e: kotlinx.coroutines.CancellationException) {
                 stoppedByUser = true
             } catch (e: Exception) {
                 AppLog.e(TAG, "生成异常", e)
                 reducer.onEvent(
-                    SseEvent.Unknown("__failed__", json.encodeToString(FailureCarrier.serializer(), FailureCarrier(null, null, e.message ?: "请求失败")))
+                    SseEvent.Unknown("__failed__", e.message ?: "请求失败")
                 )
             }
 
@@ -138,14 +140,24 @@ class ChatOrchestrator(
                 snapshot.finished -> ReplyStatus.DONE
                 else -> ReplyStatus.INTERRUPTED // 无 message_stop 也无失败标记：按断流处理
             }
-
             // 用户取消后仍需完整落盘：挂到 NonCancellable
             kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                val requestLimit = snapshot.failure?.takeIf { finalStatus == ReplyStatus.ERROR }?.let { failure ->
+                    ChatRequestLimit.fromFailure(failure) ?: kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        checkUnavailableFiles(failure, request)
+                    }
+                }
+                val blocks = shownBlocks()
+                val webHistory = if (finalStatus == ReplyStatus.DONE && prefix.isEmpty()) {
+                    reducer.completedWebToolHistory()
+                } else {
+                    null
+                }
                 persistFinal(
                     assistantId,
                     sessionId,
-                    shownBlocks(),
-                    reducer.snapshot(),
+                    blocks + listOfNotNull(webHistory, requestLimit?.toBlock()),
+                    snapshot,
                     finalStatus,
                     model,
                     accumulateUsage = resumeMessageId != null,
@@ -209,8 +221,7 @@ class ChatOrchestrator(
         accumulateUsage: Boolean = false,
     ) {
         try {
-            repository.replaceBlocks(messageId, blocks)
-            repository.updateMessageStatus(messageId, status)
+            repository.finishMessage(messageId, blocks, status)
             repository.touchConversation(sessionId)
 
             snap.usage?.let { usage ->
@@ -236,11 +247,38 @@ class ChatOrchestrator(
     }
 
     private fun httpErrorEvent(e: DeepSeekApiException): SseEvent =
+        failureEvent(e.httpStatus, e.errorType, e.message, e.requestId)
+
+    private fun checkUnavailableFiles(
+        failure: MessageEventReducer.StreamFailure,
+        request: MessageRequest,
+    ): ChatRequestLimit? {
+        if (failure.httpStatus !in setOf(400, 403, 404, 410, 422) &&
+            failure.errorType != "invalid_request_error"
+        ) return null
+        // Some rejected file references only return a generic invalid-request error.
+        val fileIds = RequestFactory.referencedFileIds(request)
+        if (fileIds.isNotEmpty()) {
+            AppLog.i(TAG, "Checking file references after Messages error: HTTP ${failure.httpStatus}, type=${failure.errorType}")
+        }
+        val hasMissing = fileIds.any { id ->
+            try {
+                !filesClient.isAvailableBlocking(id)
+            } catch (e: java.io.IOException) {
+                false
+            } catch (e: DeepSeekApiException) {
+                false
+            }
+        }
+        return ChatRequestLimit.FILE_UNAVAILABLE.takeIf { hasMissing }
+    }
+
+    private fun failureEvent(status: Int?, type: String?, message: String, requestId: String?): SseEvent =
         SseEvent.Unknown(
-            "__failed__",
+            "__http_error__",
             json.encodeToString(
                 FailureCarrier.serializer(),
-                FailureCarrier(e.httpStatus, e.errorType, e.message),
+                FailureCarrier(status, type, message, requestId),
             ),
         )
 
@@ -249,6 +287,7 @@ class ChatOrchestrator(
         val status: Int? = null,
         val type: String? = null,
         val message: String? = null,
+        @kotlinx.serialization.SerialName("request_id") val requestId: String? = null,
     )
 
     private fun MessageEventReducer.DraftBlock.toReplyBlock(): ReplyBlock = when (this) {
