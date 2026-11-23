@@ -2,11 +2,11 @@
 
 [English](README.md)
 
-## 下载 1.2.1
+## 下载 1.2.2
 
-- [Android 安装包（.apk）](https://github.com/david1025/deepdesk-android/releases/download/v1.2.1/DeepDesk-1.2.1.apk)，适用于 Android 8.0 及更高版本
+- [Android 安装包（.apk）](https://github.com/david1025/deepdesk-android/releases/download/v1.2.2/DeepDesk-1.2.2.apk)，适用于 Android 8.0 及更高版本
 
-[发布说明](https://github.com/david1025/deepdesk-android/releases/tag/v1.2.1)
+[发布说明](https://github.com/david1025/deepdesk-android/releases/tag/v1.2.2)
 
 Windows 和 macOS 桌面版在 [david1025/deepdesk](https://github.com/david1025/deepdesk)。
 
